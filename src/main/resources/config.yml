@@ -1,0 +1,39 @@
+# SettlerIslands configuration
+#
+# World border size in blocks (square, centred on 0,0).
+border-size: 5500
+
+# Ores per zone. Vanilla ores are removed everywhere and only these are placed.
+# total  = approximate number of ore blocks on the whole island (spread evenly over its land)
+# min-y / max-y = height range the ore can appear in
+# vein   = average blocks per vein
+# Deepslate versions are used automatically where the ore lands in deepslate.
+ores:
+  MEADOW:
+    COAL_ORE:    { total: 8000,  min-y: 0,   max-y: 120, vein: 10 }
+    COPPER_ORE:  { total: 2000,  min-y: -16, max-y: 80,  vein: 8 }
+  IRONSTONE:
+    IRON_ORE:    { total: 21000, min-y: -48, max-y: 170, vein: 9 }
+    COAL_ORE:    { total: 6000,  min-y: 0,   max-y: 170, vein: 10 }
+    COPPER_ORE:  { total: 2000,  min-y: -16, max-y: 100, vein: 8 }
+  GLOOMREACH:
+    GOLD_ORE:    { total: 6000,  min-y: -56, max-y: 60,  vein: 7 }
+    REDSTONE_ORE: { total: 9000, min-y: -60, max-y: 30,  vein: 7 }
+    COAL_ORE:    { total: 3000,  min-y: 0,   max-y: 120, vein: 10 }
+  HIGHLANDS:
+    COPPER_ORE:  { total: 8000,  min-y: -16, max-y: 120, vein: 10 }
+    LAPIS_ORE:   { total: 3000,  min-y: -48, max-y: 64,  vein: 6 }
+    EMERALD_ORE: { total: 600,   min-y: 60,  max-y: 230, vein: 1 }
+    DIAMOND_ORE: { total: 500,   min-y: -60, max-y: -10, vein: 4 }
+  NETHER:
+    NETHER_QUARTZ_ORE: { total: 10000, min-y: 10, max-y: 120, vein: 9 }
+    NETHER_GOLD_ORE:   { total: 2000,  min-y: 10, max-y: 120, vein: 8 }
+    ANCIENT_DEBRIS:    { total: 150,   min-y: 8,  max-y: 30,  vein: 1 }
+  FAR_REEF:
+    DIAMOND_ORE: { total: 1200,  min-y: -60, max-y: 0,   vein: 4 }
+    LAPIS_ORE:   { total: 1000,  min-y: -48, max-y: 40,  vein: 6 }
+  TIMBERLANDS:
+    COAL_ORE:    { total: 1000,  min-y: 20,  max-y: 90,  vein: 8 }
+
+# Glowstone clusters on the surface of the Nether zone (clusters per chunk, 0-1 = chance)
+nether-glowstone-per-chunk: 0.35

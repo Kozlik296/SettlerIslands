@@ -1,0 +1,15 @@
+name: SettlerIslands
+version: ${version}
+main: dev.kozlik.settlerislands.SettlerIslands
+api-version: '1.21'
+load: STARTUP
+description: Finite island world generator for the settler server.
+commands:
+  settlerislands:
+    description: SettlerIslands admin command
+    aliases: [si]
+    permission: settlerislands.admin
+    usage: /si <create|tp|where|stats>
+permissions:
+  settlerislands.admin:
+    default: op
