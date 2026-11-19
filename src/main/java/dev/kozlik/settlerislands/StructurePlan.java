@@ -23,6 +23,12 @@ public final class StructurePlan {
         public int pz(double t, double side) {
             return (int) Math.round(z + dz * t + dx * side);
         }
+
+        /** Same point, direction turned to the nearest axis (straight piers look clean). */
+        public Coast snapped() {
+            if (Math.abs(dx) > Math.abs(dz)) return new Coast(x, z, Math.signum(dx), 0);
+            return new Coast(x, z, 0, Math.signum(dz));
+        }
     }
 
     /** Things that need the live world (entities, spawner types, loot) and are done when the chunk first loads. */
@@ -65,18 +71,18 @@ public final class StructurePlan {
         Coast bay = coast(m, meadow, 0);
         harbour = new Harbour(bay);
         village = new Village(m, bay.px(-190, 0), bay.pz(-190, 0), seedOf(l), bay.px(-13, 0), bay.pz(-13, 0));
-        camps.add(new Camp(coast(m, meadow, -30), Villager.Profession.CARTOGRAPHER, "cartography_table", "blue_wool"));
+        camps.add(new Camp(m, meadow, -30, Villager.Profession.CARTOGRAPHER, "cartography_table", "blue_wool"));
 
         // Timberlands: cove port facing Meadow
         Layout.Island timber = l.find("timberlands");
-        camps.add(new Camp(coast(m, timber, 180), Villager.Profession.FLETCHER, "fletching_table", "green_wool"));
-        piers.add(new Pier(coast(m, timber, 172), 30, true));
-        piers.add(new Pier(coast(m, timber, 188), 30, true));
+        camps.add(new Camp(m, timber, 180, Villager.Profession.FLETCHER, "fletching_table", "green_wool"));
+        piers.add(new Pier(coast(m, timber, 170).snapped(), 30, true));
+        piers.add(new Pier(coast(m, timber, 190).snapped(), 30, true));
 
-        camps.add(new Camp(coast(m, l.find("sandbanks"), 30), Villager.Profession.MASON, "stonecutter", "yellow_wool"));
-        camps.add(new Camp(coast(m, l.find("ironstone"), 40), Villager.Profession.BUTCHER, "smoker", "gray_wool"));
-        camps.add(new Camp(coast(m, l.find("highlands"), 40), Villager.Profession.SHEPHERD, "loom", "light_blue_wool"));
-        camps.add(new Camp(coast(m, l.find("nether"), 150), Villager.Profession.CLERIC, "brewing_stand", "red_wool"));
+        camps.add(new Camp(m, l.find("sandbanks"), 30, Villager.Profession.MASON, "stonecutter", "yellow_wool"));
+        camps.add(new Camp(m, l.find("ironstone"), 40, Villager.Profession.BUTCHER, "smoker", "gray_wool"));
+        camps.add(new Camp(m, l.find("highlands"), 40, Villager.Profession.SHEPHERD, "loom", "light_blue_wool"));
+        camps.add(new Camp(m, l.find("nether"), 150, Villager.Profession.CLERIC, "brewing_stand", "red_wool"));
 
         Layout.Island nether = l.find("nether");
         fortress = new Fortress((int) nether.cx + 40, (int) nether.cz);

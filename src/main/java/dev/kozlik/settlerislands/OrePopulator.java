@@ -68,9 +68,12 @@ public final class OrePopulator extends BlockPopulator {
                         if (region.getType(x, y, z).isAir()) region.setType(x, y, z, Material.WATER);
                     }
                 }
-                for (int y = minY + 1; y <= top; y++) {
+                boolean nether = sm.zone() == Zone.NETHER;
+                for (int y = minY + 1; y <= Math.min(maxY, h + 40); y++) {
                     Material t = region.getType(x, y, z);
-                    if (STRIP.contains(t)) region.setType(x, y, z, replacement(t));
+                    if (y <= top && STRIP.contains(t)) region.setType(x, y, z, replacement(t));
+                    // no lava springs or lava lakes outside the Nether zone (only deep cave lava stays)
+                    else if (t == Material.LAVA && !nether && y > minY + 12) region.setType(x, y, z, y <= h ? Material.STONE : Material.AIR);
                 }
             }
         }

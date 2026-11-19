@@ -68,6 +68,33 @@ public final class Builder {
         }
     }
 
+    /**
+     * Levels a box to height y and blends the ground around it back into the natural terrain over
+     * 'falloff' blocks, so a yard sits in the landscape instead of on a cube of dirt.
+     */
+    public void terraform(int x1, int z1, int x2, int z2, int y, Material coreTop, int falloff, int clearUp) {
+        for (int x = Math.max(x1 - falloff, minX); x <= Math.min(x2 + falloff, minX + 15); x++) {
+            for (int z = Math.max(z1 - falloff, minZ); z <= Math.min(z2 + falloff, minZ + 15); z++) {
+                double ox = Math.max(0, Math.max(x1 - x, x - x2)), oz = Math.max(0, Math.max(z1 - z, z - z2));
+                double d = Math.hypot(ox, oz);
+                if (d >= falloff) continue;
+                WorldModel.Sample sm = model.sample(x, z);
+                int natural = model.height(x, z, sm);
+                if (d > 0 && natural < WorldModel.WATER_TOP) continue;
+                double t = d / falloff;
+                t = t * t * (3 - 2 * t);
+                int target = (int) Math.round(y * (1 - t) + natural * t);
+                Material top = d == 0 ? coreTop : model.surface(x, z, sm, natural).top();
+                Material fill = top == Material.STONE || top == Material.ANDESITE || top == Material.TUFF || top == Material.GRAVEL
+                        ? Material.STONE : top == Material.SAND ? Material.SAND : top == Material.BLACKSTONE || top == Material.NETHERRACK
+                        ? Material.NETHERRACK : Material.DIRT;
+                for (int yy = Math.min(natural, target - 1) + 1; yy < target; yy++) set(x, yy, z, fill);
+                set(x, target, z, top);
+                clear(x, z, target + 1, Math.max(natural, target) + clearUp);
+            }
+        }
+    }
+
     /** Deterministic 0..999 value for a position, for random-looking but stable choices. */
     public static int hash(int x, int y, int z) {
         int h = x * 73856093 ^ y * 19349663 ^ z * 83492791;

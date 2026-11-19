@@ -38,7 +38,7 @@ public final class WorldModel {
     }
 
     private final Layout layout = Layout.get();
-    private final SimplexOctaveGenerator coastA, coastB, floor, relA, relB, ridge, var, var2, lava, surf, caveA, caveB, caveC;
+    private final SimplexOctaveGenerator coastA, coastB, floor, relA, relB, ridge, var, var2, lava, surf, caveA, caveB, caveC, warpA, warpB, ridge2, canyonG, canyonMask, crackG, crackMask;
     private volatile Map<Zone, Integer> zoneChunks;
 
     private WorldModel(long seed) {
@@ -55,6 +55,13 @@ public final class WorldModel {
         caveA = gen(seed, 11, 2);
         caveB = gen(seed, 12, 1);
         caveC = gen(seed, 13, 1);
+        warpA = gen(seed, 14, 2);
+        warpB = gen(seed, 15, 2);
+        ridge2 = gen(seed, 16, 2);
+        canyonG = gen(seed, 17, 2);
+        canyonMask = gen(seed, 18, 1);
+        crackG = gen(seed, 19, 1);
+        crackMask = gen(seed, 20, 1);
     }
 
     private static SimplexOctaveGenerator gen(long seed, int salt, int octaves) {
@@ -68,6 +75,7 @@ public final class WorldModel {
     }
 
     private static double ridged(SimplexOctaveGenerator g, double x, double z, double scale) {
+        // 0..1, sharp ridges
         double r = 1 - Math.abs(n(g, x, z, scale));
         return r * r;
     }
@@ -129,25 +137,76 @@ public final class WorldModel {
             return (int) Math.max(6, y);
         }
         double beach = SEA_LEVEL + Math.min(sm.s() / 30.0, 1.0) * 2;
-        double rel = Math.max(0, relief(sm.zone(), x, z)) * smooth(sm.s(), 15, 160);
-        if (sm.zone() == Zone.NETHER) {
-            // volcanic island: a steep rocky rim rises straight out of the sea
-            rel = 14 * smooth(sm.s(), 4, 40) + Math.max(0, relief(Zone.NETHER, x, z)) * smooth(sm.s(), 40, 200);
-        }
+        double rel = Math.max(1, relief(sm.zone(), x, z, sm.s()));
+        Zone zone = sm.zone();
+        if (zone == Zone.IRONSTONE || zone == Zone.HIGHLANDS || zone == Zone.GLOOMREACH) rel *= smooth(sm.s(), 6, 60);
+        else if (zone == Zone.NETHER) rel = 14 * smooth(sm.s(), 4, 40) + rel * smooth(sm.s(), 40, 200);
+        else rel *= smooth(sm.s(), 15, 160);
         int h = (int) (beach + rel);
-        if (sm.zone() == Zone.NETHER && lavaPool(x, z, sm)) h = Math.min(h, 66) - 3;
+        if (zone == Zone.NETHER && lavaPool(x, z, sm)) h = LAVA_LEVEL - 4;
         return h;
     }
 
-    private double relief(Zone zone, int x, int z) {
+    // --------------------------------------------------- natural mountain shapes
+
+    private double wx(double x, double z) {
+        return x + n(warpA, x, z, 420) * 110;
+    }
+
+    private double wz(double x, double z) {
+        return z + n(warpB, x, z, 420) * 110;
+    }
+
+    /** Broad, warped mountain ranges from 0 (valley) to 1 (peak). */
+    private double mountains(int x, int z, double scale) {
+        double ax = wx(x, z), az = wz(x, z);
+        double r1 = ridged(ridge, ax, az, scale);
+        double r2 = ridged(ridge2, ax, az, scale * 0.45);
+        double base = n(relA, ax, az, scale * 1.6) * 0.5 + 0.5;
+        return Math.pow(r1 * 0.7 + r2 * 0.3, 1.6) * (0.55 + 0.45 * base);
+    }
+
+    /** Winding canyons (1 at the bottom of a canyon), only in some regions. */
+    private double canyon(int x, int z) {
+        double c = Math.abs(n(canyonG, wx(x, z), wz(x, z), 260));
+        return (1 - smooth(c, 0.008, 0.04)) * smooth(n(canyonMask, x, z, 500), -0.1, 0.25);
+    }
+
+    /** Narrow crevices high up in the mountains. */
+    private double crack(int x, int z) {
+        double c = Math.abs(n(crackG, x, z, 70));
+        return (1 - smooth(c, 0.004, 0.014)) * smooth(n(crackMask, x, z, 300), 0.15, 0.4);
+    }
+
+    private double carve(double rel, int x, int z, double dome, double canyonDepth) {
+        rel -= canyon(x, z) * Math.min(rel - 4, canyonDepth) * dome;
+        rel -= crack(x, z) * Math.min(rel * 0.35, 18) * smooth(rel, 35, 70);
+        return rel;
+    }
+
+    /** Nether: terraced cliffs and ridges, like the real Nether's ledges. */
+    private double netherRaw(int x, int z) {
+        double b = 10 + n(relA, x, z, 90) * 18 + mountains(x, z, 150) * 60;
+        double t = b / 8.0, f = t - Math.floor(t);
+        f = f * f * f * f;                                  // flat ledges, steep risers
+        return (Math.floor(t) + f) * 8.0;
+    }
+
+    private double relief(Zone zone, int x, int z, double s) {
         return switch (zone) {
             case MEADOW -> 4 + n(relA, x, z, 200) * 7 + n(relB, x, z, 60) * 3;
-            case IRONSTONE -> 18 + ridged(ridge, x, z, 260) * 95 + n(relB, x, z, 45) * 8;
-            case GLOOMREACH -> 8 + n(relA, x, z, 110) * 16 + n(relB, x, z, 35) * 5;
+            case IRONSTONE -> {
+                double dome = smooth(s, 10, 380);
+                yield carve(12 + dome * (18 + mountains(x, z, 300) * 85), x, z, dome, 40);
+            }
+            case HIGHLANDS -> {
+                double dome = smooth(s, 10, 320);
+                yield carve(15 + dome * (20 + mountains(x, z, 280) * 95), x, z, dome, 45);
+            }
+            case GLOOMREACH -> carve(8 + n(relA, x, z, 110) * 12 + mountains(x, z, 160) * 30, x, z, smooth(s, 10, 120), 22);
             case SANDBANKS -> 2 + Math.abs(n(relA, x, z, 45)) * 7;
-            case TIMBERLANDS -> 6 + n(relA, x, z, 130) * 14 + n(relB, x, z, 40) * 4;
-            case HIGHLANDS -> 25 + ridged(ridge, x, z, 220) * 115 + n(relB, x, z, 50) * 8;
-            case NETHER -> 6 + n(relA, x, z, 80) * 16 + n(relB, x, z, 25) * 4;
+            case TIMBERLANDS -> carve(6 + n(relA, x, z, 140) * 12 + n(relB, x, z, 45) * 4 + mountains(x, z, 200) * 18, x, z, 1, 12);
+            case NETHER -> netherRaw(x, z);
             case FAR_REEF -> 3 + n(relA, x, z, 70) * 7;
             case ISLET -> 2 + Math.abs(n(relA, x, z, 20)) * 6;
             case SEA -> 0;
@@ -156,10 +215,10 @@ public final class WorldModel {
 
     /** Lava lakes on the Nether zone. */
     public boolean lavaPool(int x, int z, Sample sm) {
-        return sm.zone() == Zone.NETHER && sm.s() > 230 && n(lava, x, z, 90) < -0.5;
+        return sm.zone() == Zone.NETHER && sm.s() > 230 && netherRaw(x, z) < 17;
     }
 
-    public static final int LAVA_LEVEL = 66;
+    public static final int LAVA_LEVEL = 72;
 
     // ------------------------------------------------------------------ caves
 
