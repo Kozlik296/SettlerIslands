@@ -37,3 +37,26 @@ ores:
 
 # Glowstone clusters on the surface of the Nether zone (clusters per chunk, 0-1 = chance)
 nether-glowstone-per-chunk: 0.35
+
+# ------------------------------------------------------------------ gameplay rules (island worlds only)
+rules:
+  # blocks placed further than this (sideways) from something that stands on the ground fall down
+  support-span: 10
+  # food spoils after this many hours of the carrying player's online time (chests keep food fresh)
+  spoil-hours: 12
+  # crops and breeding on Meadow are this many times faster
+  meadow-growth: 2
+  # banned: elytra flight, ender pearls, ender chests, shulker boxes, Nether/End portals,
+  # chorus fruit teleporting, ice (or frost walker) over the open sea
+  bans: true
+  # location prices: one price per trade and place for everyone; each use makes the trade
+  # 'step' worse (villager sells dearer / pays less), up to 'max' times; it drifts back with
+  # the given half-life
+  prices:
+    step: 0.02
+    max: 2.0
+    half-life-hours: 12
+  # trades the village villagers may not offer (iron and diamond gear, diamonds, bells)
+  trade-filter: true
+  # [shop] signs on chests
+  chest-shops: true

@@ -34,12 +34,26 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
     }
 
     private SetupListener setup;
+    private Economy economy;
+
+    @Override
+    public void onDisable() {
+        if (economy != null) economy.save();
+    }
+
 
     @Override
     public void onEnable() {
         getServer().getPluginManager().registerEvents(this, this);
+        worldMap = new WorldMap(this);
+        getServer().getPluginManager().registerEvents(worldMap, this);
         setup = new SetupListener(this);
         getServer().getPluginManager().registerEvents(setup, this);
+        getServer().getPluginManager().registerEvents(new SupportRule(this), this);
+        getServer().getPluginManager().registerEvents(new GameRules(this), this);
+        economy = new Economy(this, setup.tradesKey);
+        getServer().getPluginManager().registerEvents(economy, this);
+        getServer().getPluginManager().registerEvents(new ChestShops(this), this);
         for (World w : Bukkit.getWorlds()) setupWorld(w);
         NetherAtmosphere atmosphere = new NetherAtmosphere();
         getServer().getScheduler().runTaskTimer(this, atmosphere, 20L, 10L);
@@ -105,6 +119,16 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
         if (!(world.getGenerator() instanceof IslandGenerator)) return;
         world.getWorldBorder().setCenter(0, 0);
         world.getWorldBorder().setSize(borderSize);
+        if (worldMap != null) {
+            worldMap.restore();
+            worldMap.prepare(world);
+        }
+    }
+
+    private WorldMap worldMap;
+
+    public WorldMap worldMap() {
+        return worldMap;
     }
 
     // ---------------------------------------------------------------- command
@@ -152,7 +176,7 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
                 StructurePlan plan = StructurePlan.get(WorldModel.get(p.getWorld().getSeed()), p.getWorld().getSeed());
                 switch (args[1].toLowerCase(Locale.ROOT)) {
                     case "village" -> {
-                        p.teleport(new Location(p.getWorld(), plan.village.cx + 6.5, plan.village.plazaY + 1, plan.village.cz + 6.5));
+                        p.teleport(new Location(p.getWorld(), plan.spawnX() + 0.5, plan.spawnY(), plan.spawnZ() + 0.5));
                         return true;
                     }
                     case "fortress" -> {

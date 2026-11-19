@@ -6,6 +6,8 @@ import org.bukkit.entity.Villager;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -54,7 +56,8 @@ public final class Village {
 
     /** type: a key of KINDS, or "farm" / "pen". */
     private record Lot(String type, int ox, int oz, int sx, int sz, int rot, int floorY,
-                       int doorX, int doorZ, int fx, int fz, Map<String, String> vars, String station, boolean yard) {
+                       int doorX, int doorZ, int fx, int fz, Map<String, String> vars, String station, boolean yard,
+                       List<Long> path) {
         boolean house() {
             return KINDS.containsKey(type);
         }
@@ -76,6 +79,11 @@ public final class Village {
     private final List<Feature> features = new ArrayList<>();
     private final int harbourX, harbourZ;
 
+    // the city hall on the square: players spawn inside, the world map hangs on its back wall
+    private static final int HALL_SPAWN_X = 14, HALL_SPAWN_Z = 10, MAP_X = 13, MAP_Y = 3, MAP_Z = 3;
+    private int hallRot, hallOx, hallOz, hallFx, hallFz;
+    private Template hall;
+
     public Village(WorldModel m, int cx, int cz, long seed, int harbourX, int harbourZ) {
         this.cx = cx;
         this.cz = cz;
@@ -87,10 +95,32 @@ public final class Village {
         // --- roads: main roads out of the square, lanes branching off them
         List<List<double[]>> mains = new ArrayList<>();
         double toHarbour = Math.atan2(harbourZ - cz, harbourX - cx);
+        // the city hall stands on the side of the square away from the harbour (snapped to an axis)
+        double away = toHarbour + Math.PI;
+        int ux = 0, uz = 0;
+        if (Math.abs(Math.cos(away)) > Math.abs(Math.sin(away))) ux = (int) Math.signum(Math.cos(away));
+        else uz = (int) Math.signum(Math.sin(away));
+        hallFx = -ux;
+        hallFz = -uz;
+        double hallDir = Math.atan2(uz, ux);
+        // five roads spread over the sides of the square that are not the hall; the one nearest the harbour goes there
+        double[] headings = new double[5];
+        double arc = Math.toRadians(250);
+        int harbourSlot = 0;
+        double best = 9;
+        for (int i = 0; i < 5; i++) {
+            headings[i] = hallDir + Math.toRadians(55) + arc * i / 4 + (rnd.nextDouble() - 0.5) * 0.2;
+            double d = Math.abs(Math.atan2(Math.sin(headings[i] - toHarbour), Math.cos(headings[i] - toHarbour)));
+            if (d < best) {
+                best = d;
+                harbourSlot = i;
+            }
+        }
+        headings[harbourSlot] = toHarbour;
         int count = 5;
         for (int i = 0; i < count; i++) {
-            double heading = i == 0 ? toHarbour : toHarbour + i * (Math.PI * 2 / count) + (rnd.nextDouble() - 0.5) * 0.5;
-            boolean harbour = i == 0;
+            double heading = headings[i];
+            boolean harbour = i == harbourSlot;
             List<double[]> road = grow(m, rnd, cx + Math.cos(heading) * (SQUARE - 1), cz + Math.sin(heading) * (SQUARE - 1), heading,
                     harbour ? 400 : 100 + rnd.nextInt(55), harbour);
             mains.add(road);
@@ -111,69 +141,145 @@ public final class Village {
         for (List<double[]> road : mains) for (int k = 14; k < road.size(); k += 19) addLamp(road.get(k), 3.5, k);
         for (List<double[]> lane : lanes) for (int k = 12; k < lane.size(); k += 19) addLamp(lane.get(k), 2.5, k);
 
-        planSquare();
+        // --- city hall, its front on the edge of the square
+        hall = Template.get("city_hall");
+        hallRot = Template.rotationFacing(hallFx, hallFz);
+        int[] hoff = hall.offset(hall.w / 2, hall.d - 1, hallRot);
+        int hfx = cx + ux * (SQUARE + 2), hfz = cz + uz * (SQUARE + 2);
+        hallOx = hfx - hoff[0];
+        hallOz = hfz - hoff[1];
+
+        planSquare(hallDir);
 
         // --- houses, gardens, fields and pens along the roads
         List<int[]> boxes = new ArrayList<>();
         boxes.add(new int[]{cx - SQUARE - 2, cz - SQUARE - 2, cx + SQUARE + 2, cz + SQUARE + 2});
-        int deck = 0, general = 0, smith = 0;
+        boxes.add(new int[]{hallOx - 2, hallOz - 2, hallOx + hall.sizeX(hallRot) + 1, hallOz + hall.sizeZ(hallRot) + 1});
+        int[] counters = new int[3];   // deck, general station, smith station
         List<List<double[]>> all = new ArrayList<>(mains);
         all.addAll(lanes);
         for (int r = 0; r < all.size(); r++) {
             List<double[]> road = all.get(r);
             int half = r < mains.size() ? 2 : 1;
-            for (int k = 6; k < road.size(); k += 11 + rnd.nextInt(6)) {
+            for (int k = 5; k < road.size(); ) {
+                double[] p = road.get(k);
+                boolean centre = Math.hypot(p[0] - cx, p[1] - cz) < 70;
                 for (int side : new int[]{-1, 1}) {
-                    if (rnd.nextDouble() < 0.08) continue;
-                    double[] p = road.get(k);
+                    if (rnd.nextDouble() < 0.04) continue;
                     double nx = -Math.sin(p[2]) * side, nz = Math.cos(p[2]) * side;   // away from the road
-                    double gap = half + 3 + rnd.nextInt(2);
+                    double gap = half + 2 + rnd.nextInt(2);
                     int frontX = (int) Math.round(p[0] + nx * gap), frontZ = (int) Math.round(p[1] + nz * gap);
-                    if (Math.hypot(frontX - cx, frontZ - cz) > RADIUS) continue;
-                    if (Math.hypot(frontX - harbourX, frontZ - harbourZ) < 45) continue;
-                    double roll = rnd.nextDouble();
-                    String type = roll < 0.12 ? "farm" : roll < 0.19 ? "pen" : DECK[deck % DECK.length];
-                    int rot = Template.rotationFacing(-nx, -nz);
-                    int[] f = facingVector(rot);
-                    String[] style = STYLES[rnd.nextInt(STYLES.length)];
-                    String station = switch (type) {
-                        case "blacksmith" -> SMITH_STATIONS[smith % SMITH_STATIONS.length];
-                        case "farmhouse" -> "composter";
-                        case "library" -> "lectern";
-                        case "bakery" -> "smoker";
-                        default -> GENERAL_STATIONS[general % GENERAL_STATIONS.length];
-                    };
-                    Map<String, String> vars = Map.of("roof", style[0], "log", style[1], "slog", style[2],
-                            "plank", style[3], "wall", style[4], "station", station, "wool", style[5]);
-                    int ox, oz, sx, sz;
-                    Kind kind = KINDS.get(type);
-                    if (kind == null) {
-                        sx = sz = 9;
-                        ox = frontX - f[0] * 4 - 4;
-                        oz = frontZ - 4 - f[1] * 4;
-                    } else {
-                        Template tp = Template.get(kind.template());
-                        int[] off = tp.offset(kind.doorCol(), kind.front(), rot);
-                        ox = frontX - off[0];
-                        oz = frontZ - off[1];
-                        sx = tp.sizeX(rot);
-                        sz = tp.sizeZ(rot);
-                    }
-                    int[] box = {ox - 1, oz - 1, ox + sx, oz + sz};
-                    if (overlapsRoad(box) || overlaps(boxes, box) || !okLand(m, box)) continue;
-                    boxes.add(box);
-                    int mx = ox + sx / 2, mz = oz + sz / 2;
-                    int floorY = Math.max(Pier.DECK + 1, m.height(mx, mz, m.sample(mx, mz)));
-                    boolean yard = kind != null && rnd.nextDouble() < 0.6;
-                    lots.add(new Lot(type, ox, oz, sx, sz, rot, floorY, frontX, frontZ, f[0], f[1], vars, station, yard));
-                    if (kind != null) {
-                        deck++;
-                        if (type.equals("blacksmith")) smith++;
-                        else if (station.equals(GENERAL_STATIONS[general % GENERAL_STATIONS.length])) general++;
-                    }
+                    Lot first = tryLot(m, rnd, boxes, counters, frontX, frontZ, nx, nz, centre, true);
+                    if (first == null || !first.house()) continue;
+                    // a second row behind the first, reached by a path round the side
+                    int depth = first.fx != 0 ? first.sx : first.sz;
+                    int bx = (int) Math.round(frontX + nx * (depth + 4)), bz = (int) Math.round(frontZ + nz * (depth + 4));
+                    if (rnd.nextDouble() < 0.75) tryLot(m, rnd, boxes, counters, bx, bz, nx, nz, centre, false);
                 }
+                k += centre ? 7 + rnd.nextInt(3) : 9 + rnd.nextInt(4);
             }
         }
+        // paths from every door to the nearest road, walking round other buildings
+        Set<Long> blocked = new HashSet<>();
+        for (int[] bx : boxes.subList(1, boxes.size())) {
+            for (int x = bx[0] + 1; x < bx[2]; x++) for (int z = bx[1] + 1; z < bx[3]; z++) blocked.add(key(x, z));
+        }
+        for (int i = 0; i < lots.size(); i++) {
+            Lot l = lots.get(i);
+            if (l.house()) lots.set(i, withPath(l, route(l, blocked)));
+        }
+    }
+
+    private static Lot withPath(Lot l, List<Long> path) {
+        return new Lot(l.type, l.ox, l.oz, l.sx, l.sz, l.rot, l.floorY, l.doorX, l.doorZ, l.fx, l.fz, l.vars, l.station, l.yard, path);
+    }
+
+    /** Tries to put a lot with its front at (frontX, frontZ), facing back along (nx, nz). */
+    private Lot tryLot(WorldModel m, Random rnd, List<int[]> boxes, int[] counters, int frontX, int frontZ,
+                       double nx, double nz, boolean centre, boolean firstRow) {
+        if (Math.hypot(frontX - cx, frontZ - cz) > RADIUS) return null;
+        if (Math.hypot(frontX - harbourX, frontZ - harbourZ) < 45) return null;
+        double roll = rnd.nextDouble();
+        String type = !centre && firstRow && roll < 0.12 ? "farm" : !centre && firstRow && roll < 0.19 ? "pen" : DECK[counters[0] % DECK.length];
+        int rot = Template.rotationFacing(-nx, -nz);
+        int[] f = facingVector(rot);
+        String[] style = STYLES[rnd.nextInt(STYLES.length)];
+        String station = switch (type) {
+            case "blacksmith" -> SMITH_STATIONS[counters[2] % SMITH_STATIONS.length];
+            case "farmhouse" -> "composter";
+            case "library" -> "lectern";
+            case "bakery" -> "smoker";
+            default -> GENERAL_STATIONS[counters[1] % GENERAL_STATIONS.length];
+        };
+        Map<String, String> vars = Map.of("roof", style[0], "log", style[1], "slog", style[2],
+                "plank", style[3], "wall", style[4], "station", station, "wool", style[5]);
+        int ox, oz, sx, sz;
+        Kind kind = KINDS.get(type);
+        if (kind == null) {
+            sx = sz = 9;
+            ox = frontX - f[0] * 4 - 4;
+            oz = frontZ - 4 - f[1] * 4;
+        } else {
+            Template tp = Template.get(kind.template());
+            int[] off = tp.offset(kind.doorCol(), kind.front(), rot);
+            ox = frontX - off[0];
+            oz = frontZ - off[1];
+            sx = tp.sizeX(rot);
+            sz = tp.sizeZ(rot);
+        }
+        boolean yard = kind != null && !centre && rnd.nextDouble() < 0.5;
+        int pad = yard ? 3 : 1;
+        int[] box = {ox - pad, oz - pad, ox + sx + pad - 1, oz + sz + pad - 1};
+        int sep = centre ? 0 : 1;
+        if (overlapsRoad(new int[]{ox - 1, oz - 1, ox + sx, oz + sz}) || overlaps(boxes, box, sep) || !okLand(m, box)) return null;
+        boxes.add(box);
+        int mx = ox + sx / 2, mz = oz + sz / 2;
+        int floorY = Math.max(Pier.DECK + 1, m.height(mx, mz, m.sample(mx, mz)));
+        Lot lot = new Lot(type, ox, oz, sx, sz, rot, floorY, frontX, frontZ, f[0], f[1], vars, station, yard, List.of());
+        lots.add(lot);
+        if (kind != null) {
+            counters[0]++;
+            if (type.equals("blacksmith")) counters[2]++;
+            else if (!type.equals("farmhouse") && !type.equals("library") && !type.equals("bakery")) counters[1]++;
+        }
+        return lot;
+    }
+
+    /**
+     * A path from the door to the nearest road: straight out, and where another building is in the
+     * way, sideways along it to the gap, then on.
+     */
+    private List<Long> route(Lot l, Set<Long> blocked) {
+        List<Long> path = new ArrayList<>();
+        int x = l.doorX, z = l.doorZ;
+        int lx = -l.fz, lz = l.fx;
+        Set<Long> own = new HashSet<>();
+        for (int i = l.ox - 3; i < l.ox + l.sx + 3; i++) for (int j = l.oz - 3; j < l.oz + l.sz + 3; j++) own.add(key(i, j));
+        int dir = 0;
+        for (int step = 0; step < 60; step++) {
+            path.add(key(x, z));
+            if (roadCells.containsKey(key(x, z))) return path;
+            int nx = x + l.fx, nz = z + l.fz;
+            boolean free = !blocked.contains(key(nx, nz)) || own.contains(key(nx, nz));
+            if (free) {
+                x = nx;
+                z = nz;
+                dir = 0;
+                continue;
+            }
+            if (dir == 0) {
+                // pick the side where the obstacle ends sooner
+                int left = 99, right = 99;
+                for (int d = 1; d < 20; d++) {
+                    if (left == 99 && !blocked.contains(key(x + lx * d + l.fx, z + lz * d + l.fz))) left = d;
+                    if (right == 99 && !blocked.contains(key(x - lx * d + l.fx, z - lz * d + l.fz))) right = d;
+                }
+                dir = left <= right ? 1 : -1;
+            }
+            x += lx * dir;
+            z += lz * dir;
+        }
+        return path;
     }
 
     /** Direction the design's front faces for a rotation (see Template.rotationFacing). */
@@ -258,9 +364,9 @@ public final class Village {
         return false;
     }
 
-    private static boolean overlaps(List<int[]> boxes, int[] b) {
+    private static boolean overlaps(List<int[]> boxes, int[] b, int sep) {
         for (int[] o : boxes) {
-            if (b[0] <= o[2] + 2 && b[2] >= o[0] - 2 && b[1] <= o[3] + 2 && b[3] >= o[1] - 2) return true;
+            if (b[0] <= o[2] + sep && b[2] >= o[0] - sep && b[1] <= o[3] + sep && b[3] >= o[1] - sep) return true;
         }
         return false;
     }
@@ -280,11 +386,12 @@ public final class Village {
      * Places the things on the square where no road enters: market stalls on the outer ring,
      * a bell frame, a big old tree, and benches facing the fountain.
      */
-    private void planSquare() {
+    private void planSquare(double hallDir) {
         List<String> outer = new ArrayList<>(List.of("tree", "stall", "bell", "stall", "stall", "beds", "stall", "beds"));
         int placed = 0;
         for (int i = 0; i < 16 && !outer.isEmpty(); i++) {
             double a = i * Math.PI / 8 + 0.2;
+            if (Math.abs(Math.atan2(Math.sin(a - hallDir), Math.cos(a - hallDir))) < Math.toRadians(40)) continue;
             int x = cx + (int) Math.round(Math.cos(a) * 12.5), z = cz + (int) Math.round(Math.sin(a) * 12.5);
             if (nearRoad(x, z, 4)) continue;
             boolean clash = false;
@@ -300,11 +407,13 @@ public final class Village {
         for (int i = 0; i < 4; i++) {
             int fx = i == 0 ? 1 : i == 1 ? -1 : 0, fz = i == 2 ? 1 : i == 3 ? -1 : 0;
             int x = cx - fx * 7, z = cz - fz * 7;
+            if (-fx == hallFx * -1 && -fz == hallFz * -1) continue;      // keep the way to the hall open
             if (!nearRoad(x, z, 2)) features.add(new Feature("bench", x, z, fx, fz));
         }
         for (int i = 0; i < 8; i++) {
             double a = i * Math.PI / 4 + Math.PI / 8;
             int x = cx + (int) Math.round(Math.cos(a) * 15.5), z = cz + (int) Math.round(Math.sin(a) * 15.5);
+            if (Math.abs(Math.atan2(Math.sin(a - hallDir), Math.cos(a - hallDir))) < Math.toRadians(30)) continue;
             if (!nearRoad(x, z, 1)) lamps.add(new int[]{x, z});
         }
     }
@@ -319,7 +428,26 @@ public final class Village {
             if (b.touches(lot.ox - 6, lot.oz - 6, lot.ox + lot.sx + 6, lot.oz + lot.sz + 6))
                 b.clearTrees(lot.ox - 6, lot.oz - 6, lot.ox + lot.sx + 5, lot.oz + lot.sz + 5);
         }
+        int hsx = hall.sizeX(hallRot), hsz = hall.sizeZ(hallRot);
+        if (b.touches(hallOx - 14, hallOz - 14, hallOx + hsx + 14, hallOz + hsz + 14)) {
+            b.clearTrees(hallOx - 6, hallOz - 6, hallOx + hsx + 5, hallOz + hsz + 5);
+        }
         buildRoads(b);
+        if (b.touches(hallOx - 14, hallOz - 14, hallOx + hsx + 14, hallOz + hsz + 14)) {
+            b.terraform(hallOx, hallOz, hallOx + hsx - 1, hallOz + hsz - 1, plazaY, Material.GRASS_BLOCK, 10, 50);
+            // paving between the square and the hall steps
+            int lx = -hallFz, lz = hallFx;
+            for (int t = SQUARE - 3; t <= SQUARE + 3; t++) {
+                for (int a = -12; a <= 12; a++) {
+                    int x = cx - hallFx * t + lx * a, z = cz - hallFz * t + lz * a;
+                    if (!b.in(x, z) || Math.hypot(x - cx, z - cz) <= SQUARE - 0.5) continue;
+                    b.foundation(x, z, plazaY, Material.COBBLESTONE);
+                    b.set(x, plazaY, z, paving(x, z));
+                    b.clear(x, z, plazaY + 1, plazaY + 8);
+                }
+            }
+            hall.place(b, hallOx, plazaY, hallOz, hallRot, Map.of(), true);
+        }
         buildSquare(b);
         for (int[] l : lamps) {
             if (!b.in(l[0], l[1])) continue;
@@ -357,8 +485,9 @@ public final class Village {
                 b.set(c.x, Pier.DECK, c.z, Material.SPRUCE_PLANKS);
                 b.clear(c.x, c.z, Pier.DECK + 1, Pier.DECK + 4);
             } else {
+                b.clearTrees(c.x, c.z, c.x, c.z);
                 b.set(c.x, g, c.z, roadBlock(c));
-                b.clear(c.x, c.z, g + 1, g + 5);
+                b.clear(c.x, c.z, g + 1, g + 3);
             }
         }
     }
@@ -516,17 +645,18 @@ public final class Village {
     private void buildHouse(Builder b, Lot lot) {
         Kind kind = KINDS.get(lot.type);
         Template tp = Template.get(kind.template());
-        b.level(lot.ox, lot.oz, lot.ox + lot.sx - 1, lot.oz + lot.sz - 1, lot.floorY, Material.GRASS_BLOCK, 24);
+        b.terraform(lot.ox, lot.oz, lot.ox + lot.sx - 1, lot.oz + lot.sz - 1, lot.floorY, Material.GRASS_BLOCK, 6, 26);
         tp.place(b, lot.ox, lot.floorY, lot.oz, lot.rot, lot.vars, true);
-        // path from the door out to the road
-        List<Long> path = new ArrayList<>();
-        for (int k = 0; k <= 16; k++) {
-            int x = lot.doorX + lot.fx * k, z = lot.doorZ + lot.fz * k;
-            if (roadCells.containsKey(key(x, z))) break;
-            path.add(key(x, z));
+        // path from the door to the road (planned round other buildings)
+        List<Long> path = lot.path;
+        for (long kk : path) {
+            int x = (int) (kk >> 32), z = (int) kk;
+            if (roadCells.containsKey(kk)) break;
             if (!b.in(x, z)) continue;
-            int g = Math.abs(lot.ox + lot.sx / 2 - x) * 2 < lot.sx && Math.abs(lot.oz + lot.sz / 2 - z) * 2 < lot.sz ? lot.floorY : b.ground(x, z);
+            boolean inLot = x >= lot.ox && z >= lot.oz && x < lot.ox + lot.sx && z < lot.oz + lot.sz;
+            int g = inLot ? lot.floorY : b.ground(x, z);
             if (g < Pier.DECK) break;
+            if (inLot) continue;
             b.set(x, g, z, Material.DIRT_PATH);
             b.clear(x, z, g + 1, g + 3);
         }
@@ -665,6 +795,15 @@ public final class Village {
         };
     }
 
+    /** Spawn point: the middle of the city hall. */
+    public int spawnX() {
+        return hallOx + hall.offset(HALL_SPAWN_X, HALL_SPAWN_Z, hallRot)[0];
+    }
+
+    public int spawnZ() {
+        return hallOz + hall.offset(HALL_SPAWN_X, HALL_SPAWN_Z, hallRot)[1];
+    }
+
     public void collectTasks(List<StructurePlan.Task> tasks) {
         for (Lot lot : lots) {
             if (lot.type.equals("pen")) {
@@ -681,6 +820,14 @@ public final class Village {
             int x = lot.ox + off[0], z = lot.oz + off[1];
             tasks.add(new StructurePlan.SpawnVillager(x, lot.floorY + 1, z, professionFor(lot.station), false, null));
             if (kind.villagers() > 1) tasks.add(new StructurePlan.SpawnVillager(x, lot.floorY + 1, z, Villager.Profession.NONE, false, null));
+        }
+        // the world map: 3 x 3 frames on the back wall of the city hall
+        int[] f = facingVector(hallRot);
+        for (int col = 0; col < 3; col++) {
+            for (int row = 0; row < 3; row++) {
+                int[] off = hall.offset(MAP_X + col, MAP_Z, hallRot);
+                tasks.add(new StructurePlan.MapFrame(hallOx + off[0], plazaY + MAP_Y + 2 - row, hallOz + off[1], f[0], f[1], col, row));
+            }
         }
         tasks.add(new StructurePlan.SpawnVillager(cx - 6, plazaY + 1, cz + 7, Villager.Profession.NONE, false, null));
         tasks.add(new StructurePlan.SpawnVillager(cx + 7, plazaY + 1, cz - 6, Villager.Profession.NONE, false, null));

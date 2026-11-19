@@ -1,6 +1,7 @@
 package dev.kozlik.settlerislands;
 
 import org.bukkit.Location;
+import org.bukkit.entity.Enemy;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Monster;
 import org.bukkit.event.EventHandler;
@@ -13,7 +14,7 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * Spawn rules that belong to the world itself:
  * no iron golems from the village, and wither skeletons / blazes inside the fortress.
- * (The full per-zone mob rules come in phase 3.)
+ * Meadow has no hostile mobs; everywhere else spawning is vanilla.
  */
 public final class SpawnRules implements Listener {
 
@@ -27,6 +28,16 @@ public final class SpawnRules implements Listener {
                 && (reason == CreatureSpawnEvent.SpawnReason.VILLAGE_DEFENSE || reason == CreatureSpawnEvent.SpawnReason.VILLAGE_INVASION)) {
             event.setCancelled(true);
             return;
+        }
+
+        // Meadow is safe: no hostile mobs spawn there on their own (no patrols either)
+        if ((reason == CreatureSpawnEvent.SpawnReason.NATURAL || reason == CreatureSpawnEvent.SpawnReason.PATROL
+                || reason == CreatureSpawnEvent.SpawnReason.REINFORCEMENTS) && event.getEntity() instanceof Enemy) {
+            long seed = loc.getWorld().getSeed();
+            if (WorldModel.get(seed).sample(loc.getBlockX(), loc.getBlockZ()).zone() == Zone.MEADOW) {
+                event.setCancelled(true);
+                return;
+            }
         }
 
         if (reason == CreatureSpawnEvent.SpawnReason.NATURAL && event.getEntity() instanceof Monster

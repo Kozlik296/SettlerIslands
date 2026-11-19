@@ -32,7 +32,7 @@ public final class StructurePlan {
     }
 
     /** Things that need the live world (entities, spawner types, loot) and are done when the chunk first loads. */
-    public sealed interface Task permits SpawnVillager, SetSpawner, SetLoot, SpawnEntity {
+    public sealed interface Task permits SpawnVillager, SetSpawner, SetLoot, SpawnEntity, MapFrame {
         int x();
 
         int z();
@@ -40,6 +40,10 @@ public final class StructurePlan {
 
     /** trades: id of a fixed trade list in trades.yml, or null for normal village trades. */
     public record SpawnVillager(int x, int y, int z, Villager.Profession profession, boolean camp, String trades) implements Task {
+    }
+
+    /** One item frame of the world map wall: (fx, fz) is where it faces, (col, row) which part of the world it shows. */
+    public record MapFrame(int x, int y, int z, int fx, int fz, int col, int row) implements Task {
     }
 
     /** Boats at the piers, animals in the pens. */
@@ -120,12 +124,16 @@ public final class StructurePlan {
         return new Coast(lastX, lastZ, dx, dz);
     }
 
-    /** Spawn point: the village square. */
+    /** Spawn point: inside the city hall. */
     public int spawnX() {
-        return village.cx;
+        return village.spawnX();
     }
 
     public int spawnZ() {
-        return village.cz;
+        return village.spawnZ();
+    }
+
+    public int spawnY() {
+        return village.plazaY + 1;
     }
 }

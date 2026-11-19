@@ -64,6 +64,7 @@ public final class SetupListener implements Listener {
         villager.setVillagerExperience(1);
         villager.setVillagerLevel(1);
         villager.setRecipes(Trades.copy(trader));
+        villager.getPersistentDataContainer().remove(new NamespacedKey(plugin, "base_prices"));
         villager.getPersistentDataContainer().set(tradesKey, PersistentDataType.STRING, trader.id());
     }
 
@@ -98,6 +99,19 @@ public final class SetupListener implements Listener {
                         villager.setInvulnerable(true);
                         villager.getPersistentDataContainer().set(campKey, PersistentDataType.BYTE, (byte) 1);
                     }
+                });
+            }
+            case StructurePlan.MapFrame f -> {
+                org.bukkit.block.BlockFace face = f.fx() > 0 ? org.bukkit.block.BlockFace.EAST : f.fx() < 0 ? org.bukkit.block.BlockFace.WEST
+                        : f.fz() > 0 ? org.bukkit.block.BlockFace.SOUTH : org.bukkit.block.BlockFace.NORTH;
+                Location loc = new Location(world, f.x() + 0.5, f.y() + 0.5, f.z() + 0.5);
+                org.bukkit.inventory.ItemStack map = plugin.worldMap().item(world, f.col(), f.row());
+                world.spawn(loc, org.bukkit.entity.GlowItemFrame.class, frame -> {
+                    frame.setFacingDirection(face, true);
+                    frame.setItem(map, false);
+                    frame.setFixed(true);
+                    frame.setInvulnerable(true);
+                    frame.setVisible(false);
                 });
             }
             case StructurePlan.SpawnEntity e -> world.spawnEntity(new Location(world, e.x() + 0.5, e.y(), e.z() + 0.5), e.type());

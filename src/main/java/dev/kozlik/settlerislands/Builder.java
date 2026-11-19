@@ -151,37 +151,93 @@ public final class Builder {
     }
 
     /**
-     * Removes trees and giant fungi above the ground in a box (only in this chunk) before something is
-     * built there, including the crowns around removed trunks, so nothing is left floating.
+     * Removes trees and giant fungi standing in a box before something is built there. A tree
+     * that touches the box is taken away whole (trunk, branches and crown, also the part outside
+     * the box), so nothing is left cut in half or floating.
      */
     public void clearTrees(int x1, int z1, int x2, int z2) {
         int ax = Math.max(Math.min(x1, x2), minX), bx = Math.min(Math.max(x1, x2), minX + 15);
         int az = Math.max(Math.min(z1, z2), minZ), bz = Math.min(Math.max(z1, z2), minZ + 15);
+        if (ax > bx || az > bz) return;
+        java.util.ArrayDeque<int[]> queue = new java.util.ArrayDeque<>();
+        java.util.HashSet<Long> searched = new java.util.HashSet<>();
         for (int x = ax; x <= bx; x++) {
             for (int z = az; z <= bz; z++) {
                 int g = ground(x, z);
-                for (int y = g + 1; y <= Math.min(maxY - 1, g + 45); y++) {
+                for (int y = g - 2; y <= Math.min(maxY - 1, g + 45); y++) {
                     Material m = region.getType(x, y, z);
-                    if (trunk(m)) {
+                    if (trunk(m)) queue.add(new int[]{x, y, z});
+                    else if (crown(m)) {
                         region.setType(x, y, z, Material.AIR);
-                        if (y > g + 2) clearCrown(x, y, z);
-                    } else if (crown(m)) region.setType(x, y, z, Material.AIR);
+                        // find the trunk this crown belongs to
+                        long cell = ((long) (x >> 2) << 40) ^ ((long) (y >> 2) << 20) ^ (z >> 2 & 0xfffff);
+                        if (!searched.add(cell)) continue;
+                        for (int dx = -3; dx <= 3; dx++)
+                            for (int dz = -3; dz <= 3; dz++)
+                                for (int dy = -4; dy <= 2; dy++)
+                                    if (region.isInRegion(x + dx, y + dy, z + dz) && trunk(region.getType(x + dx, y + dy, z + dz)))
+                                        queue.add(new int[]{x + dx, y + dy, z + dz});
+                    }
                 }
             }
         }
+        if (queue.isEmpty()) return;
+        // collect each group of touching logs (also diagonally); it is a tree only if natural leaves
+        // or fungus caps grow next to it, so log posts of buildings are never touched
+        java.util.List<int[]> removed = new java.util.ArrayList<>();
+        java.util.HashSet<Long> visited = new java.util.HashSet<>();
+        while (!queue.isEmpty()) {
+            int[] seed = queue.poll();
+            if (!visited.add(pk(seed[0], seed[1], seed[2]))) continue;
+            if (!region.isInRegion(seed[0], seed[1], seed[2]) || !trunk(region.getType(seed[0], seed[1], seed[2]))) continue;
+            java.util.List<int[]> group = new java.util.ArrayList<>();
+            java.util.ArrayDeque<int[]> q = new java.util.ArrayDeque<>();
+            q.add(seed);
+            boolean tree = false;
+            while (!q.isEmpty() && group.size() < 600) {
+                int[] p = q.poll();
+                group.add(p);
+                for (int dx = -1; dx <= 1; dx++)
+                    for (int dy = -1; dy <= 1; dy++)
+                        for (int dz = -1; dz <= 1; dz++) {
+                            if (dx == 0 && dy == 0 && dz == 0) continue;
+                            int x = p[0] + dx, y = p[1] + dy, z = p[2] + dz;
+                            if (!region.isInRegion(x, y, z)) continue;
+                            if (!tree && naturalCrown(x, y, z)) tree = true;
+                            if (trunk(region.getType(x, y, z)) && visited.add(pk(x, y, z))) q.add(new int[]{x, y, z});
+                        }
+            }
+            if (!tree) continue;
+            for (int[] p : group) region.setType(p[0], p[1], p[2], Material.AIR);
+            removed.addAll(group);
+        }
+        // and the crowns around them
+        java.util.HashSet<Long> done = new java.util.HashSet<>();
+        for (int[] p : removed) {
+            long cell = ((long) (p[0] >> 1) << 40) ^ ((long) (p[1] >> 1) << 20) ^ (p[2] >> 1 & 0xfffff);
+            if (!done.add(cell)) continue;
+            for (int dx = -4; dx <= 4; dx++)
+                for (int dz = -4; dz <= 4; dz++)
+                    for (int dy = -3; dy <= 4; dy++) {
+                        if (Math.abs(dx) + Math.abs(dz) + Math.abs(dy) > 7) continue;
+                        int x = p[0] + dx, y = p[1] + dy, z = p[2] + dz;
+                        if (region.isInRegion(x, y, z) && naturalCrown(x, y, z)) region.setType(x, y, z, Material.AIR);
+                    }
+        }
     }
 
-    private void clearCrown(int cx, int cy, int cz) {
-        for (int x = cx - 3; x <= cx + 3; x++)
-            for (int z = cz - 3; z <= cz + 3; z++)
-                for (int y = cy - 3; y <= cy + 4; y++)
-                    if (region.isInRegion(x, y, z) && crown(region.getType(x, y, z))) region.setType(x, y, z, Material.AIR);
+    private static long pk(int x, int y, int z) {
+        return ((long) x & 0x3ffffff) << 38 | ((long) y & 0xfff) << 26 | ((long) z & 0x3ffffff);
     }
 
-    /**
-     * Levels the ground in a box to height y: cuts away anything above (up to y + clearUp),
-     * fills dirt below and puts the top block at y. Only for columns in this chunk.
-     */
+    /** Leaves that grew on their own (not placed by a structure), fungus caps, vines. */
+    private boolean naturalCrown(int x, int y, int z) {
+        BlockData bd = region.getBlockData(x, y, z);
+        if (bd instanceof org.bukkit.block.data.type.Leaves l) return !l.isPersistent();
+        Material m = bd.getMaterial();
+        return m != Material.VINE && crown(m);
+    }
+
     public void level(int x1, int z1, int x2, int z2, int y, Material top, int clearUp) {
         int ax = Math.max(Math.min(x1, x2), minX), bx = Math.min(Math.max(x1, x2), minX + 15);
         int az = Math.max(Math.min(z1, z2), minZ), bz = Math.min(Math.max(z1, z2), minZ + 15);

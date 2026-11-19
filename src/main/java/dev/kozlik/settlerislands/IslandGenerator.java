@@ -75,7 +75,7 @@ public final class IslandGenerator extends ChunkGenerator {
         WorldModel m = WorldModel.get(world.getSeed());
         StructurePlan plan = StructurePlan.get(m, world.getSeed());
         if (plan.village != null) {
-            return new Location(world, plan.spawnX() + 0.5, plan.village.plazaY + 1, plan.spawnZ() + 3.5);
+            return new Location(world, plan.spawnX() + 0.5, plan.spawnY(), plan.spawnZ() + 0.5);
         }
         for (int r = 0; r < 400; r += 8) {
             for (int a = 0; a < 360; a += 30) {
