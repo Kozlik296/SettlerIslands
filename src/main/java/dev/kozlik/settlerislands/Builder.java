@@ -44,7 +44,7 @@ public final class Builder {
 
     public void set(int x, int y, int z, String data) {
         if (in(x, z) && y > minY && y < maxY) {
-            region.setBlockData(x, y, z, DATA.computeIfAbsent(data, Bukkit::createBlockData));
+            region.setBlockData(x, y, z, Template.safeData(data));
         }
     }
 

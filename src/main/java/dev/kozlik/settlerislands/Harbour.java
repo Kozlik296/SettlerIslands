@@ -15,7 +15,7 @@ public final class Harbour {
 
     public static final int QUAY = 65;          // promenade height
     private static final int HALF = 34;         // half length of the quay
-    private static final int[] PIERS = {-24, -12, 0, 12, 24};
+    private static final int[] PIERS = {-24, -8, 8, 24};
     private static final int PIER_LEN = 30;
 
     private final StructurePlan.Coast c;
@@ -68,7 +68,7 @@ public final class Harbour {
         // railing on the quay edge with lanterns, gaps where the piers start
         for (int s = -HALF; s <= HALF; s++) {
             boolean gap = false;
-            for (int p : PIERS) if (Math.abs(s - p) <= 1) gap = true;
+            for (int p : PIERS) if (Math.abs(s - p) <= 2) gap = true;
             int x = x(2, s), z = z(2, s);
             if (!gap) b.set(x, QUAY + 1, z, Material.STONE_BRICK_WALL);
             if (!gap && Math.floorMod(s, 8) == 4) {
@@ -101,15 +101,15 @@ public final class Harbour {
 
     private void buildPier(Builder b, int p) {
         // steps down from the quay to the pier deck
-        for (int s = p - 1; s <= p + 1; s++) {
+        for (int s = p - 2; s <= p + 2; s++) {
             b.set(x(1, s), QUAY - 1, z(1, s), "minecraft:stone_brick_stairs[facing=" + landward + "]");
             b.clear(x(1, s), z(1, s), QUAY, QUAY + 3);
             b.set(x(2, s), QUAY - 2, z(2, s), Material.SPRUCE_PLANKS);
             b.clear(x(2, s), z(2, s), QUAY - 1, QUAY + 3);
         }
+        // deck: 5 wide, 9 wide at the end
         for (double t = 3; t <= PIER_LEN; t += 0.5) {
-            boolean head = t >= PIER_LEN - 3;
-            double w = head ? 4 : 1;
+            double w = t >= PIER_LEN - 4 ? 4 : 2;
             for (double s = p - w; s <= p + w; s += 0.5) {
                 int x = x(t, s), z = z(t, s);
                 if (!b.in(x, z)) continue;
@@ -118,24 +118,24 @@ public final class Harbour {
             }
         }
         for (int t = 3; t <= PIER_LEN; t++) {
-            boolean head = t >= PIER_LEN - 3;
-            int w = head ? 5 : 2;
+            boolean head = t >= PIER_LEN - 4;
+            int w = head ? 4 : 2;
             for (int side : new int[]{-1, 1}) {
                 int x = x(t, p + side * w), z = z(t, p + side * w);
-                if (t % 4 == 0 || (head && t == PIER_LEN)) {
-                    for (int y = b.ground(x, z) + 1; y <= Pier.DECK; y++) b.set(x, y, z, Material.SPRUCE_LOG);
+                // posts stay under the deck
+                if (t % 4 == 0 || t == PIER_LEN) {
+                    for (int y = b.ground(x, z) + 1; y < Pier.DECK; y++) b.set(x, y, z, Material.SPRUCE_LOG);
                 }
-                if (!head && t % 9 == 5) continue;           // gaps in the rail to step into boats
-                b.set(x, Pier.DECK + 1, z, Material.SPRUCE_FENCE);
-                if (t % 8 == 0) {
+                // rail along the edge, with openings to step into the boats
+                boolean opening = !head && (t == 13 || t == 14 || t == 15 || t == 22 || t == 23 || t == 24);
+                if (!opening && t > 3) b.set(x, Pier.DECK + 1, z, Material.SPRUCE_FENCE);
+                if (!opening && t % 8 == 4) {
                     b.set(x, Pier.DECK + 2, z, Material.SPRUCE_FENCE);
                     b.set(x, Pier.DECK + 3, z, Material.LANTERN);
                 }
             }
-            if (head && t == PIER_LEN) {
-                for (int s = p - 5; s <= p + 5; s++) b.set(x(t + 1, s), Pier.DECK + 1, z(t + 1, s), Material.SPRUCE_FENCE);
-            }
         }
+        for (int s = p - 4; s <= p + 4; s++) b.set(x(PIER_LEN, s), Pier.DECK + 1, z(PIER_LEN, s), Material.SPRUCE_FENCE);
     }
 
     public void collectTasks(List<StructurePlan.Task> tasks) {
@@ -143,7 +143,7 @@ public final class Harbour {
         int i = 0;
         for (int p : PIERS) {
             for (int t : new int[]{14, 23}) {
-                int side = (i % 2 == 0) ? 4 : -4;
+                int side = (i % 2 == 0) ? 4 : -4;   // just outside the rail opening
                 tasks.add(new StructurePlan.SpawnBoat(x(t, p + side), Pier.DECK, z(t, p + side), boats[i % boats.length]));
                 i++;
             }

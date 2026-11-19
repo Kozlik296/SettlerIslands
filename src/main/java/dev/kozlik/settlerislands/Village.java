@@ -4,22 +4,21 @@ import org.bukkit.Material;
 import org.bukkit.entity.Villager;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
 /**
- * The big village on Meadow. A paved square with a garden, a well and the bell, four paved
- * streets (the east one runs on to the harbour), timber-framed houses with front gardens,
- * and crop farms. Every house has beds and a workstation, so the game treats it as a real
- * village (iron golems are blocked separately).
+ * The big village on Meadow, laid out like a real village: winding roads grow out of a paved
+ * square (one of them runs down to the harbour), side lanes branch off them, and houses and
+ * farms sit along the roads wherever there is room, each with a little path to its door.
+ * Every house has beds and a workstation, so the game treats it as a real village
+ * (iron golems are blocked separately).
  */
 public final class Village {
 
-    private static final int ARM = 120;            // how far houses go along each street
-    private static final int HALF = 2;             // street half width (5 wide)
-    private static final int SETBACK = 6;          // street centre to the house front
-    private static final int[][] DIRS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    private static final int RADIUS = 175;         // nothing is built further from the square
     private static final String[] STATIONS = {
             "lectern", "smithing_table", "composter", "lectern", "blast_furnace", "barrel", "grindstone",
             "brewing_stand", "lectern", "loom", "cartography_table", "fletching_table", "cauldron", "stonecutter",
@@ -33,76 +32,235 @@ public final class Village {
             {"spruce", "oak_log", "stripped_oak_log", "oak_planks", "calcite"}};
     private static final String[] FLOWERS = {"poppy", "dandelion", "cornflower", "allium", "azure_bluet", "oxeye_daisy", "red_tulip", "orange_tulip"};
 
-    private record Lot(boolean farm, boolean big, int ox, int oz, int rot, int floorY, int fx, int fz,
-                       int frontX, int frontZ, int px, int pz, Map<String, String> vars, String station) {
+    private record Lot(boolean farm, boolean big, int ox, int oz, int sx, int sz, int rot, int floorY,
+                       int doorX, int doorZ, int fx, int fz, Map<String, String> vars, String station) {
+    }
+
+    /** One road cell: width class (2 = main road, 1 = lane) and distance from the square. */
+    private record Cell(int x, int z, int main, int dist) {
     }
 
     public final int cx, cz, plazaY;
-    private final int eastLength;
     private final List<Lot> lots = new ArrayList<>();
+    private final Map<Long, Cell> roadCells = new HashMap<>();
+    private final Map<Long, List<Cell>> roadByChunk = new HashMap<>();
+    private final List<int[]> lamps = new ArrayList<>();
+    private final int harbourX, harbourZ;
 
-    public Village(WorldModel m, int cx, int cz, long seed, int eastLength) {
+    public Village(WorldModel m, int cx, int cz, long seed, int harbourX, int harbourZ) {
         this.cx = cx;
         this.cz = cz;
-        this.eastLength = Math.max(ARM, eastLength);
+        this.harbourX = harbourX;
+        this.harbourZ = harbourZ;
         this.plazaY = Math.max(Pier.DECK + 1, m.height(cx, cz, m.sample(cx, cz)));
         Random rnd = new Random(seed);
+
+        // --- roads: main roads out of the square, lanes branching off them
+        List<List<double[]>> mains = new ArrayList<>();
+        double toHarbour = Math.atan2(harbourZ - cz, harbourX - cx);
+        int count = 5;
+        for (int i = 0; i < count; i++) {
+            double heading = i == 0 ? toHarbour : toHarbour + i * (Math.PI * 2 / count) + (rnd.nextDouble() - 0.5) * 0.5;
+            boolean harbour = i == 0;
+            List<double[]> road = grow(m, rnd, cx + Math.cos(heading) * 12, cz + Math.sin(heading) * 12, heading,
+                    harbour ? 400 : 95 + rnd.nextInt(55), harbour);
+            mains.add(road);
+            rasterize(road, 2);
+        }
+        List<List<double[]>> lanes = new ArrayList<>();
+        for (List<double[]> road : mains) {
+            for (int k = 30; k < road.size() - 15; k += 28 + rnd.nextInt(18)) {
+                if (rnd.nextDouble() < 0.35) continue;
+                double[] p = road.get(k);
+                double h = p[2] + (rnd.nextBoolean() ? 1 : -1) * Math.toRadians(65 + rnd.nextInt(40));
+                List<double[]> lane = grow(m, rnd, p[0], p[1], h, 35 + rnd.nextInt(40), false);
+                if (lane.size() < 15) continue;
+                lanes.add(lane);
+                rasterize(lane, 1);
+            }
+        }
+        for (List<double[]> road : mains) for (int k = 14; k < road.size(); k += 19) addLamp(road.get(k), 3.5, k);
+        for (List<double[]> lane : lanes) for (int k = 12; k < lane.size(); k += 19) addLamp(lane.get(k), 2.5, k);
+
+        // --- houses and farms along the roads
+        List<int[]> boxes = new ArrayList<>();
+        boxes.add(new int[]{cx - 13, cz - 13, cx + 13, cz + 13});
         int st = 0;
-        for (int[] d : DIRS) {
-            for (int t = 20; t <= ARM - 4; t += 18) {
+        List<List<double[]>> all = new ArrayList<>(mains);
+        all.addAll(lanes);
+        for (int r = 0; r < all.size(); r++) {
+            List<double[]> road = all.get(r);
+            int half = r < mains.size() ? 2 : 1;
+            for (int k = 8; k < road.size(); k += 13 + rnd.nextInt(8)) {
                 for (int side : new int[]{-1, 1}) {
-                    int px = -d[1] * side, pz = d[0] * side;          // away from the street
-                    int sx = cx + d[0] * t, sz = cz + d[1] * t;       // street centre
-                    int frontX = sx + px * SETBACK, frontZ = sz + pz * SETBACK;
-                    boolean farm = rnd.nextDouble() < 0.2;
+                    if (rnd.nextDouble() < 0.15) continue;
+                    double[] p = road.get(k);
+                    double nx = -Math.sin(p[2]) * side, nz = Math.cos(p[2]) * side;   // away from the road
+                    double gap = half + 3 + rnd.nextInt(3);
+                    int frontX = (int) Math.round(p[0] + nx * gap), frontZ = (int) Math.round(p[1] + nz * gap);
+                    if (Math.hypot(frontX - cx, frontZ - cz) > RADIUS) continue;
+                    if (Math.hypot(frontX - harbourX, frontZ - harbourZ) < 45) continue;
+                    boolean farm = rnd.nextDouble() < 0.18;
                     boolean big = !farm && rnd.nextDouble() < 0.4;
+                    int rot = Template.rotationFacing(-nx, -nz);
+                    int[] f = facingVector(rot);
                     String[] style = STYLES[rnd.nextInt(STYLES.length)];
                     Map<String, String> vars = Map.of("roof", style[0], "log", style[1], "slog", style[2],
-                            "plank", style[3], "wall", style[4], "station", STATIONS[st++ % STATIONS.length]);
-                    int rot = Template.rotationFacing(-px, -pz);
-                    int ox, oz;
+                            "plank", style[3], "wall", style[4], "station", STATIONS[st % STATIONS.length]);
+                    int ox, oz, sx, sz, doorX, doorZ;
                     if (farm) {
-                        ox = frontX + px * 5 - 4;
-                        oz = frontZ + pz * 5 - 4;
+                        sx = sz = 9;
+                        ox = frontX - f[0] * 4 - 4;
+                        oz = frontZ - 4 - f[1] * 4;
+                        doorX = frontX;
+                        doorZ = frontZ;
                     } else {
                         Template tp = Template.get(big ? "house_big" : "house_small");
                         int porchZ = big ? 10 : 8;
                         int[] off = tp.offset(tp.w / 2, porchZ, rot);
                         ox = frontX - off[0];
                         oz = frontZ - off[1];
+                        sx = tp.sizeX(rot);
+                        sz = tp.sizeZ(rot);
+                        doorX = frontX;
+                        doorZ = frontZ;
                     }
-                    int sizeX = farm ? 9 : Template.get(big ? "house_big" : "house_small").sizeX(rot);
-                    int sizeZ = farm ? 9 : Template.get(big ? "house_big" : "house_small").sizeZ(rot);
-                    if (!okLand(m, ox, oz, ox + sizeX - 1, oz + sizeZ - 1)) continue;
-                    int mx = ox + sizeX / 2, mz = oz + sizeZ / 2;
+                    int[] box = {ox - 1, oz - 1, ox + sx, oz + sz};
+                    if (overlapsRoad(box) || overlaps(boxes, box) || !okLand(m, box)) continue;
+                    boxes.add(box);
+                    int mx = ox + sx / 2, mz = oz + sz / 2;
                     int floorY = Math.max(Pier.DECK + 1, m.height(mx, mz, m.sample(mx, mz)));
-                    lots.add(new Lot(farm, big, ox, oz, rot, floorY, -px, -pz, frontX, frontZ, px, pz, vars, vars.get("station")));
+                    lots.add(new Lot(farm, big, ox, oz, sx, sz, rot, floorY, doorX, doorZ, f[0], f[1], vars, vars.get("station")));
+                    if (!farm) st++;
                 }
             }
         }
     }
 
-    private static boolean okLand(WorldModel m, int x1, int z1, int x2, int z2) {
-        for (int[] p : new int[][]{{x1, z1}, {x2, z1}, {x1, z2}, {x2, z2}, {(x1 + x2) / 2, (z1 + z2) / 2}}) {
+    /** Direction the design's front faces for a rotation (see Template.rotationFacing). */
+    private static int[] facingVector(int rot) {
+        return switch (rot) {
+            case 0 -> new int[]{0, 1};
+            case 1 -> new int[]{-1, 0};
+            case 2 -> new int[]{0, -1};
+            default -> new int[]{1, 0};
+        };
+    }
+
+    /** Grows a winding road: the heading drifts a little every block; the harbour road steers to the harbour. */
+    private List<double[]> grow(WorldModel m, Random rnd, double x, double z, double heading, int maxLen, boolean toHarbour) {
+        List<double[]> pts = new ArrayList<>();
+        double turn = 0;
+        for (int i = 0; i < maxLen; i++) {
+            if (toHarbour) {
+                double want = Math.atan2(harbourZ - z, harbourX - x);
+                double diff = Math.atan2(Math.sin(want - heading), Math.cos(want - heading));
+                heading += diff * 0.06;
+                if (Math.hypot(harbourX - x, harbourZ - z) < 3) break;
+            }
+            turn = turn * 0.9 + rnd.nextGaussian() * 0.012;
+            heading += turn;
+            x += Math.cos(heading);
+            z += Math.sin(heading);
+            WorldModel.Sample sm = m.sample((int) x, (int) z);
+            if (!toHarbour && (!sm.land() || sm.zone() != Zone.MEADOW || sm.s() < 12)) break;
+            if (!toHarbour && Math.hypot(x - cx, z - cz) > RADIUS) break;
+            pts.add(new double[]{x, z, heading});
+        }
+        return pts;
+    }
+
+    private void rasterize(List<double[]> road, int main) {
+        double r = main == 2 ? 2.2 : 1.4;
+        for (double[] p : road) {
+            for (int dx = -3; dx <= 3; dx++) {
+                for (int dz = -3; dz <= 3; dz++) {
+                    if (dx * dx + dz * dz > r * r) continue;
+                    int x = (int) Math.round(p[0]) + dx, z = (int) Math.round(p[1]) + dz;
+                    long key = key(x, z);
+                    Cell old = roadCells.get(key);
+                    if (old != null && old.main >= main) continue;
+                    Cell c = new Cell(x, z, main, (int) Math.hypot(x - cx, z - cz));
+                    roadCells.put(key, c);
+                    roadByChunk.computeIfAbsent(key(x >> 4, z >> 4), k -> new ArrayList<>()).add(c);
+                }
+            }
+        }
+    }
+
+    private void addLamp(double[] p, double off, int k) {
+        double side = (k / 19) % 2 == 0 ? 1 : -1;
+        int x = (int) Math.round(p[0] - Math.sin(p[2]) * off * side), z = (int) Math.round(p[1] + Math.cos(p[2]) * off * side);
+        if (!roadCells.containsKey(key(x, z))) lamps.add(new int[]{x, z});
+    }
+
+    private static long key(int x, int z) {
+        return ((long) x << 32) ^ (z & 0xffffffffL);
+    }
+
+    private boolean overlapsRoad(int[] box) {
+        for (int x = box[0]; x <= box[2]; x++)
+            for (int z = box[1]; z <= box[3]; z++)
+                if (roadCells.containsKey(key(x, z))) return true;
+        return false;
+    }
+
+    private static boolean overlaps(List<int[]> boxes, int[] b) {
+        for (int[] o : boxes) {
+            if (b[0] <= o[2] + 2 && b[2] >= o[0] - 2 && b[1] <= o[3] + 2 && b[3] >= o[1] - 2) return true;
+        }
+        return false;
+    }
+
+    private static boolean okLand(WorldModel m, int[] b) {
+        for (int[] p : new int[][]{{b[0], b[1]}, {b[2], b[1]}, {b[0], b[3]}, {b[2], b[3]}, {(b[0] + b[2]) / 2, (b[1] + b[3]) / 2}}) {
             WorldModel.Sample sm = m.sample(p[0], p[1]);
             if (!sm.land() || sm.zone() != Zone.MEADOW || sm.s() < 10) return false;
         }
-        return true;
+        int h1 = m.height(b[0], b[1], m.sample(b[0], b[1])), h2 = m.height(b[2], b[3], m.sample(b[2], b[3]));
+        return Math.abs(h1 - h2) <= 6;
     }
 
+    // ------------------------------------------------------------------ build
+
     public void build(Builder b) {
-        int r = Math.max(ARM, eastLength) + 30;
-        if (!b.touches(cx - r, cz - r, cx + r, cz + r)) return;
-        buildStreets(b);
+        if (!b.touches(cx - RADIUS - 220, cz - RADIUS - 220, cx + RADIUS + 220, cz + RADIUS + 220)) return;
+        buildRoads(b);
         buildSquare(b);
+        for (int[] l : lamps) if (b.in(l[0], l[1])) lamp(b, l[0], b.ground(l[0], l[1]), l[1]);
         for (Lot lot : lots) {
-            if (!b.touches(lot.ox - 8, lot.oz - 8, lot.ox + 20, lot.oz + 20)) continue;
+            if (!b.touches(lot.ox - 14, lot.oz - 14, lot.ox + lot.sx + 14, lot.oz + lot.sz + 14)) continue;
             if (lot.farm) buildFarm(b, lot);
             else buildHouse(b, lot);
         }
     }
 
-    // ------------------------------------------------------------------ square
+    private Material roadBlock(Cell c) {
+        int h = Builder.hash(c.x, 7, c.z);
+        if (c.dist < 28) {
+            return h < 450 ? Material.STONE_BRICKS : h < 650 ? Material.COBBLESTONE : h < 820 ? Material.POLISHED_ANDESITE : Material.GRAVEL;
+        }
+        if (c.main == 2) {
+            return h < 420 ? Material.DIRT_PATH : h < 600 ? Material.GRAVEL : h < 800 ? Material.COBBLESTONE : Material.COARSE_DIRT;
+        }
+        return h < 600 ? Material.DIRT_PATH : h < 800 ? Material.COARSE_DIRT : Material.GRAVEL;
+    }
+
+    private void buildRoads(Builder b) {
+        List<Cell> cells = roadByChunk.get(key(b.minX >> 4, b.minZ >> 4));
+        if (cells == null) return;
+        for (Cell c : cells) {
+            WorldModel.Sample sm = b.model.sample(c.x, c.z);
+            int g = b.ground(c.x, c.z);
+            if (!sm.land() || g < Pier.DECK) {
+                b.set(c.x, Pier.DECK, c.z, Material.SPRUCE_PLANKS);
+                b.clear(c.x, c.z, Pier.DECK + 1, Pier.DECK + 4);
+            } else {
+                b.set(c.x, g, c.z, roadBlock(c));
+                b.clear(c.x, c.z, g + 1, g + 5);
+            }
+        }
+    }
 
     private static Material paving(int x, int z) {
         int h = Builder.hash(x, 7, z);
@@ -116,9 +274,11 @@ public final class Village {
 
     private void buildSquare(Builder b) {
         int y = plazaY;
-        for (int x = cx - 11; x <= cx + 11; x++) {
-            for (int z = cz - 11; z <= cz + 11; z++) {
+        for (int x = cx - 12; x <= cx + 12; x++) {
+            for (int z = cz - 12; z <= cz + 12; z++) {
                 if (!b.in(x, z)) continue;
+                double d = Math.hypot(x - cx, z - cz);
+                if (d > 12.5) continue;                               // round square
                 b.foundation(x, z, y, Material.COBBLESTONE);
                 b.clear(x, z, y + 1, y + 10);
                 int ring = Math.max(Math.abs(x - cx), Math.abs(z - cz));
@@ -135,22 +295,15 @@ public final class Village {
                 } else b.set(x, y, z, paving(x, z));
             }
         }
-        // well roof with the bell hanging under it
         for (int[] o : new int[][]{{-2, -2}, {2, -2}, {-2, 2}, {2, 2}}) {
             for (int k = 1; k <= 3; k++) b.set(cx + o[0], y + k, cz + o[1], Material.SPRUCE_FENCE);
         }
         for (int x = cx - 2; x <= cx + 2; x++)
             for (int z = cz - 2; z <= cz + 2; z++) b.set(x, y + 4, z, "minecraft:spruce_slab[type=bottom]");
         b.set(cx, y + 3, cz, "minecraft:bell[attachment=ceiling,facing=north]");
-        // lamp posts and banners where the streets meet the square
-        for (int[] o : new int[][]{{9, 9}, {-9, 9}, {9, -9}, {-9, -9}}) lamp(b, cx + o[0], y, cz + o[1]);
-        int[] rot = {12, 4, 0, 8};
-        for (int i = 0; i < 4; i++) {
-            int[] d = DIRS[i];
-            for (int side : new int[]{-1, 1}) {
-                int x = cx + d[0] * 11 - d[1] * side * 4, z = cz + d[1] * 11 + d[0] * side * 4;
-                b.set(x, y + 1, z, "minecraft:red_banner[rotation=" + rot[i] + "]");
-            }
+        for (int[] o : new int[][]{{8, 8}, {-8, 8}, {8, -8}, {-8, -8}}) lamp(b, cx + o[0], y, cz + o[1]);
+        for (int[] o : new int[][]{{11, 0, 12}, {-11, 0, 4}, {0, 11, 0}, {0, -11, 8}}) {
+            b.set(cx + o[0], y + 1, cz + o[1], "minecraft:red_banner[rotation=" + o[2] + "]");
         }
     }
 
@@ -161,60 +314,32 @@ public final class Village {
         b.set(x, y + 4, z, Material.LANTERN);
     }
 
-    // ----------------------------------------------------------------- streets
-
-    private void buildStreets(Builder b) {
-        for (int[] d : DIRS) {
-            int len = d[0] == 1 ? eastLength : ARM + 6;
-            int px = -d[1], pz = d[0];
-            for (int t = 11; t <= len; t++) {
-                for (int side = -HALF; side <= HALF; side++) {
-                    int x = cx + d[0] * t + px * side, z = cz + d[1] * t + pz * side;
-                    if (!b.in(x, z)) continue;
-                    WorldModel.Sample sm = b.model.sample(x, z);
-                    int g = b.ground(x, z);
-                    if (!sm.land() || g < Pier.DECK) {
-                        b.set(x, Pier.DECK, z, Material.SPRUCE_PLANKS);
-                        b.clear(x, z, Pier.DECK + 1, Pier.DECK + 4);
-                    } else {
-                        b.set(x, g, z, paving(x, z));
-                        b.clear(x, z, g + 1, g + 5);
-                    }
-                }
-                if (t % 16 == 0) {
-                    int side = (t / 16) % 2 == 0 ? HALF + 1 : -HALF - 1;
-                    int x = cx + d[0] * t + px * side, z = cz + d[1] * t + pz * side;
-                    if (b.in(x, z)) lamp(b, x, b.ground(x, z), z);
-                }
-            }
-        }
-    }
-
     // ------------------------------------------------------------------ houses
 
     private void buildHouse(Builder b, Lot lot) {
         Template tp = Template.get(lot.big ? "house_big" : "house_small");
-        int sx = tp.sizeX(lot.rot), sz = tp.sizeZ(lot.rot);
-        b.level(lot.ox, lot.oz, lot.ox + sx - 1, lot.oz + sz - 1, lot.floorY, Material.GRASS_BLOCK, 20);
+        b.level(lot.ox, lot.oz, lot.ox + lot.sx - 1, lot.oz + lot.sz - 1, lot.floorY, Material.GRASS_BLOCK, 20);
         tp.place(b, lot.ox, lot.floorY, lot.oz, lot.rot, lot.vars, true);
-        // front garden between the house and the street, path to the door
-        for (int along = -5; along <= 5; along++) {
-            for (int k = HALF + 1; k < SETBACK; k++) {
-                int x = lot.frontX - lot.px * (SETBACK - k) - lot.pz * along;
-                int z = lot.frontZ - lot.pz * (SETBACK - k) + lot.px * along;
-                if (!b.in(x, z)) continue;
+        // path from the door out to the road
+        for (int k = 0; k <= 14; k++) {
+            int x = lot.doorX + lot.fx * k, z = lot.doorZ + lot.fz * k;
+            if (roadCells.containsKey(key(x, z))) break;
+            if (!b.in(x, z)) continue;
+            int g = b.ground(x, z);
+            if (g < Pier.DECK) break;
+            b.set(x, g, z, Material.DIRT_PATH);
+            b.clear(x, z, g + 1, g + 3);
+        }
+        // flowers and bushes around the house
+        for (int x = lot.ox - 2; x <= lot.ox + lot.sx + 1; x++) {
+            for (int z = lot.oz - 2; z <= lot.oz + lot.sz + 1; z++) {
+                boolean ring = x < lot.ox || z < lot.oz || x >= lot.ox + lot.sx || z >= lot.oz + lot.sz;
+                if (!ring || !b.in(x, z) || roadCells.containsKey(key(x, z))) continue;
                 int g = b.ground(x, z);
-                if (g < Pier.DECK) continue;
-                if (along == 0) {
-                    b.set(x, g, z, Material.DIRT_PATH);
-                    b.clear(x, z, g + 1, g + 3);
-                    continue;
-                }
-                b.set(x, g, z, Material.GRASS_BLOCK);
-                b.clear(x, z, g + 1, g + 3);
+                if (g < Pier.DECK || b.get(x, g + 1, z) != Material.AIR) continue;
                 int h = Builder.hash(x, 5, z);
-                if (h < 180) b.set(x, g + 1, z, "minecraft:oak_leaves[persistent=true]");
-                else if (h < 520) b.set(x, g + 1, z, "minecraft:" + FLOWERS[h % FLOWERS.length]);
+                if (h < 70) b.set(x, g + 1, z, "minecraft:oak_leaves[persistent=true]");
+                else if (h < 260) b.set(x, g + 1, z, "minecraft:" + FLOWERS[h % FLOWERS.length]);
             }
         }
     }
@@ -270,7 +395,7 @@ public final class Village {
         for (Lot lot : lots) {
             if (lot.farm) continue;
             Template tp = Template.get(lot.big ? "house_big" : "house_small");
-            int[] off = tp.offset(tp.w / 2, tp.d / 2 - 1, lot.rot);
+            int[] off = tp.offset(tp.w / 2, tp.d / 2, lot.rot);
             int x = lot.ox + off[0], z = lot.oz + off[1];
             tasks.add(new StructurePlan.SpawnVillager(x, lot.floorY + 1, z, professionFor(lot.station), false));
             if (lot.big) tasks.add(new StructurePlan.SpawnVillager(x, lot.floorY + 1, z, Villager.Profession.NONE, false));

@@ -160,7 +160,21 @@ public final class Template {
             for (Map.Entry<String, String> e : vars.entrySet()) s = s.replace("{" + e.getKey() + "}", e.getValue());
         }
         if (rot != 0) s = rotate(s, rot);
-        return DATA.computeIfAbsent(s, Bukkit::createBlockData);
+        return safeData(s);
+    }
+
+    /** Never lets an unknown block name crash the server: it logs once and places air instead. */
+    static BlockData safeData(String s) {
+        BlockData bd = DATA.get(s);
+        if (bd != null) return bd;
+        try {
+            bd = Bukkit.createBlockData(s);
+        } catch (IllegalArgumentException e) {
+            Bukkit.getLogger().warning("[SettlerIslands] Unknown block '" + s + "', placing air instead");
+            bd = Bukkit.createBlockData(org.bukkit.Material.AIR);
+        }
+        DATA.put(s, bd);
+        return bd;
     }
 
     private static String turn(String dir, int rot) {

@@ -64,7 +64,7 @@ public final class StructurePlan {
         Layout.Island meadow = l.find("meadow");
         Coast bay = coast(m, meadow, 0);
         harbour = new Harbour(bay);
-        village = new Village(m, bay.px(-190, 0), bay.pz(-190, 0), seedOf(l), 190 - 12);
+        village = new Village(m, bay.px(-190, 0), bay.pz(-190, 0), seedOf(l), bay.px(-13, 0), bay.pz(-13, 0));
         camps.add(new Camp(coast(m, meadow, -30), Villager.Profession.CARTOGRAPHER, "cartography_table", "blue_wool"));
 
         // Timberlands: cove port facing Meadow
