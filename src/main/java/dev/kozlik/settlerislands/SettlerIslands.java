@@ -36,6 +36,7 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         getServer().getPluginManager().registerEvents(this, this);
+        getServer().getPluginManager().registerEvents(new SetupListener(this), this);
         for (World w : Bukkit.getWorlds()) setupWorld(w);
         getServer().getScheduler().runTaskTimer(this, this::updateNetherDarkness, 20L, 10L);
     }
@@ -126,6 +127,7 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
         if (args.length == 0) {
             sender.sendMessage("/si create <name> - make a new island world and go there");
             sender.sendMessage("/si tp <island|zone> - go to an island (meadow, ironstone, islet3, nether...)");
+            sender.sendMessage("/si tp village|fortress - go to a structure");
             sender.sendMessage("/si where - show the zone and biome you stand in");
             sender.sendMessage("/si stats - land per zone and planned ore totals");
             return true;
@@ -156,6 +158,14 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
                     StringBuilder sb = new StringBuilder("Islands: ");
                     for (Layout.Island i : Layout.get().islands()) sb.append(i.id).append(' ');
                     sender.sendMessage(sb.toString());
+                    return true;
+                }
+                if (args[1].equalsIgnoreCase("village") || args[1].equalsIgnoreCase("fortress")) {
+                    StructurePlan plan = StructurePlan.get(WorldModel.get(p.getWorld().getSeed()), p.getWorld().getSeed());
+                    Location to = args[1].equalsIgnoreCase("village")
+                            ? new Location(p.getWorld(), plan.village.cx + 0.5, plan.village.plazaY + 1, plan.village.cz + 3.5)
+                            : new Location(p.getWorld(), plan.fortress.fx + 0.5, Fortress.DECK + 1, plan.fortress.fz - 40 + 0.5);
+                    p.teleport(to);
                     return true;
                 }
                 Layout.Island isl = Layout.get().find(args[1]);

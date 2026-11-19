@@ -67,12 +67,16 @@ public final class IslandGenerator extends ChunkGenerator {
 
     @Override
     public List<BlockPopulator> getDefaultPopulators(World world) {
-        return List.of(new OrePopulator(plugin));
+        return List.of(new OrePopulator(plugin), new StructurePopulator());
     }
 
     @Override
     public Location getFixedSpawnLocation(World world, Random random) {
         WorldModel m = WorldModel.get(world.getSeed());
+        StructurePlan plan = StructurePlan.get(m, world.getSeed());
+        if (plan.village != null) {
+            return new Location(world, plan.spawnX() + 0.5, plan.village.plazaY + 1, plan.spawnZ() + 3.5);
+        }
         for (int r = 0; r < 400; r += 8) {
             for (int a = 0; a < 360; a += 30) {
                 int x = SPAWN_X + (int) (r * Math.cos(Math.toRadians(a)));
