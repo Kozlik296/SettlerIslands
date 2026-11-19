@@ -38,7 +38,7 @@ public final class WorldModel {
     }
 
     private final Layout layout = Layout.get();
-    private final SimplexOctaveGenerator coastA, coastB, floor, relA, relB, ridge, var, var2, lava, surf;
+    private final SimplexOctaveGenerator coastA, coastB, floor, relA, relB, ridge, var, var2, lava, surf, caveA, caveB, caveC;
     private volatile Map<Zone, Integer> zoneChunks;
 
     private WorldModel(long seed) {
@@ -52,6 +52,9 @@ public final class WorldModel {
         var2 = gen(seed, 8, 2);
         lava = gen(seed, 9, 2);
         surf = gen(seed, 10, 2);
+        caveA = gen(seed, 11, 2);
+        caveB = gen(seed, 12, 1);
+        caveC = gen(seed, 13, 1);
     }
 
     private static SimplexOctaveGenerator gen(long seed, int salt, int octaves) {
@@ -127,6 +130,10 @@ public final class WorldModel {
         }
         double beach = SEA_LEVEL + Math.min(sm.s() / 30.0, 1.0) * 2;
         double rel = Math.max(0, relief(sm.zone(), x, z)) * smooth(sm.s(), 15, 160);
+        if (sm.zone() == Zone.NETHER) {
+            // volcanic island: a steep rocky rim rises straight out of the sea
+            rel = 14 * smooth(sm.s(), 4, 40) + Math.max(0, relief(Zone.NETHER, x, z)) * smooth(sm.s(), 40, 200);
+        }
         int h = (int) (beach + rel);
         if (sm.zone() == Zone.NETHER && lavaPool(x, z, sm)) h = Math.min(h, 66) - 3;
         return h;
@@ -149,10 +156,29 @@ public final class WorldModel {
 
     /** Lava lakes on the Nether zone. */
     public boolean lavaPool(int x, int z, Sample sm) {
-        return sm.zone() == Zone.NETHER && sm.s() > 60 && n(lava, x, z, 90) < -0.5;
+        return sm.zone() == Zone.NETHER && sm.s() > 230 && n(lava, x, z, 90) < -0.5;
     }
 
     public static final int LAVA_LEVEL = 66;
+
+    // ------------------------------------------------------------------ caves
+
+    /**
+     * Our own caves (vanilla caves are off because they punched holes in the sea floor).
+     * Only under land, never near the coast and never close to the surface.
+     */
+    public boolean cave(int x, int y, int z, Sample sm, int h, int minY) {
+        if (!sm.land() || sm.s() < 28 || y > h - 8 || y < minY + 6) return false;
+        boolean gloom = sm.zone() == Zone.GLOOMREACH;
+        // big open chambers
+        double cheese = caveA.noise(x / 70.0, y / 35.0, z / 70.0, 2.0, 0.5, true);
+        if (cheese > (gloom ? 0.48 : 0.62)) return true;
+        // winding tunnels where two noise fields are both near zero
+        double a = caveB.noise(x / 45.0, y / 28.0, z / 45.0, 2.0, 0.5, true);
+        if (Math.abs(a) > 0.07) return false;
+        double b = caveC.noise(x / 45.0, y / 28.0, z / 45.0, 2.0, 0.5, true);
+        return Math.abs(b) < (gloom ? 0.09 : 0.06);
+    }
 
     // ---------------------------------------------------------------- surface
 
@@ -200,13 +226,21 @@ public final class WorldModel {
                 if (h > 112) yield s(Material.SNOW_BLOCK, Material.SNOW_BLOCK, 2);
                 yield s(Material.GRASS_BLOCK, Material.DIRT, 2);
             }
-            case NETHER -> switch (netherKind(v)) {
+            case NETHER -> {
+                double inner = smooth(sm.s(), 110, 220);
+                if (g + 0.6 > inner * 1.6 + 0.2 || sm.s() < 110) {
+                    // outer volcanic rim: blackstone, basalt, tuff, a little magma
+                    Material top = g > 0.55 ? Material.MAGMA_BLOCK : g > 0.15 ? Material.BLACKSTONE : g > -0.3 ? Material.BASALT : Material.TUFF;
+                    yield new Surface(top, Material.BLACKSTONE, 3, Material.BLACKSTONE, Material.DEEPSLATE, 0, false);
+                }
+                yield switch (netherKind(v)) {
                 case 0 -> new Surface(Material.BASALT, Material.BLACKSTONE, 3, Material.NETHERRACK, Material.DEEPSLATE, 0, false);
                 case 1 -> new Surface(Material.SOUL_SAND, Material.SOUL_SOIL, 3, Material.NETHERRACK, Material.DEEPSLATE, 0, false);
                 case 3 -> new Surface(Material.CRIMSON_NYLIUM, Material.NETHERRACK, 1, Material.NETHERRACK, Material.DEEPSLATE, 0, false);
                 case 4 -> new Surface(Material.WARPED_NYLIUM, Material.NETHERRACK, 1, Material.NETHERRACK, Material.DEEPSLATE, 0, false);
                 default -> new Surface(Material.NETHERRACK, Material.NETHERRACK, 1, Material.NETHERRACK, Material.DEEPSLATE, 0, false);
-            };
+                };
+            }
             case ISLET -> g > 0.3 ? s(Material.GRASS_BLOCK, Material.DIRT, 1) : g < -0.3 ? s(Material.GRAVEL, Material.STONE, 1) : s(Material.STONE, Material.STONE, 1);
             case SEA -> {
                 if (sm.s() > -110) {
@@ -266,7 +300,7 @@ public final class WorldModel {
                 yield Biome.CHERRY_GROVE;
             }
             case HIGHLANDS -> sm.s() < 30 ? Biome.STONY_SHORE : h > 150 ? Biome.FROZEN_PEAKS : h > 112 ? Biome.SNOWY_SLOPES : v < 0 ? Biome.GROVE : Biome.SNOWY_TAIGA;
-            case NETHER -> switch (netherKind(v)) {
+            case NETHER -> sm.s() < 140 ? Biome.STONY_SHORE : switch (netherKind(v)) {
                 case 0 -> Biome.BASALT_DELTAS;
                 case 1 -> Biome.SOUL_SAND_VALLEY;
                 case 3 -> Biome.CRIMSON_FOREST;

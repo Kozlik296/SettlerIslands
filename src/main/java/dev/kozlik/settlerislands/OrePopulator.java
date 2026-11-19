@@ -58,8 +58,16 @@ public final class OrePopulator extends BlockPopulator {
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
                 int x = bx + lx, z = bz + lz;
-                int top = Math.min(maxY, m.height(x, z, m.sample(x, z)) + 4);
-                heights[lx][lz] = top - 4;
+                WorldModel.Sample sm = m.sample(x, z);
+                int h = m.height(x, z, sm);
+                int top = Math.min(maxY, h + 4);
+                heights[lx][lz] = h;
+                // close any air gaps in the sea that decorations left behind
+                if (sm.zone() != Zone.NETHER && h < WorldModel.WATER_TOP) {
+                    for (int y = h + 1; y <= WorldModel.WATER_TOP; y++) {
+                        if (region.getType(x, y, z).isAir()) region.setType(x, y, z, Material.WATER);
+                    }
+                }
                 for (int y = minY + 1; y <= top; y++) {
                     Material t = region.getType(x, y, z);
                     if (STRIP.contains(t)) region.setType(x, y, z, replacement(t));

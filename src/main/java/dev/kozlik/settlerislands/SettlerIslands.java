@@ -37,6 +37,7 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
     public void onEnable() {
         getServer().getPluginManager().registerEvents(this, this);
         for (World w : Bukkit.getWorlds()) setupWorld(w);
+        getServer().getScheduler().runTaskTimer(this, this::updateNetherDarkness, 20L, 10L);
     }
 
     private void loadSettings() {
@@ -81,6 +82,25 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
 
     public double glowstonePerChunk() {
         return glowstonePerChunk;
+    }
+
+    private final java.util.Set<java.util.UUID> darkPlayers = new java.util.HashSet<>();
+
+    /** Inside the Nether zone it is always night for that player (only their own sky changes). */
+    private void updateNetherDarkness() {
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            boolean dark = false;
+            if (p.getWorld().getGenerator() instanceof IslandGenerator) {
+                WorldModel m = WorldModel.get(p.getWorld().getSeed());
+                WorldModel.Sample sm = m.sample(p.getLocation().getBlockX(), p.getLocation().getBlockZ());
+                dark = sm.zone() == Zone.NETHER && sm.s() > 110;
+            }
+            if (dark && darkPlayers.add(p.getUniqueId())) {
+                p.setPlayerTime(18000L, false);
+            } else if (!dark && darkPlayers.remove(p.getUniqueId())) {
+                p.resetPlayerTime();
+            }
+        }
     }
 
     @Override

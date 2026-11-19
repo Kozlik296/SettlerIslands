@@ -46,6 +46,7 @@ public final class IslandGenerator extends ChunkGenerator {
                     else if (depth <= sf.underDepth()) mat = sf.banded() ? WorldModel.band(y) : sf.under();
                     else mat = y < sf.deepY() ? sf.deep() : sf.stone();
                     if (y <= minY + 3 && random.nextInt(y - minY + 1) == 0) mat = Material.BEDROCK;
+                    else if (m.cave(x, y, z, sm, h, minY)) mat = y <= minY + 10 ? Material.LAVA : Material.CAVE_AIR;
                     data.setBlock(lx, y, lz, mat);
                 }
                 if (sm.zone() == Zone.NETHER) {
@@ -87,7 +88,7 @@ public final class IslandGenerator extends ChunkGenerator {
 
     @Override public boolean shouldGenerateNoise() { return false; }
     @Override public boolean shouldGenerateSurface() { return false; }
-    @Override public boolean shouldGenerateCaves() { return true; }
+    @Override public boolean shouldGenerateCaves() { return false; }
     @Override public boolean shouldGenerateDecorations() { return true; }
     @Override public boolean shouldGenerateMobs() { return true; }
     @Override public boolean shouldGenerateStructures() { return false; }
