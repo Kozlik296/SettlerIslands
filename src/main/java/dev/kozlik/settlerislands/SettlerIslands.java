@@ -33,9 +33,9 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
         loadSettings();
     }
 
-    @Override
     private SetupListener setup;
 
+    @Override
     public void onEnable() {
         getServer().getPluginManager().registerEvents(this, this);
         setup = new SetupListener(this);
