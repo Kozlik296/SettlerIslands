@@ -24,7 +24,7 @@ import java.util.Map;
 public final class SettlerIslands extends JavaPlugin implements Listener {
 
     private final Map<Zone, List<OreSpec>> ores = new EnumMap<>(Zone.class);
-    private int borderSize = 5500;
+    private int borderSize = 6000;
     private double glowstonePerChunk = 0.35;
 
     @Override
@@ -38,12 +38,14 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(this, this);
         getServer().getPluginManager().registerEvents(new SetupListener(this), this);
         for (World w : Bukkit.getWorlds()) setupWorld(w);
-        getServer().getScheduler().runTaskTimer(this, this::updateNetherDarkness, 20L, 10L);
+        NetherAtmosphere atmosphere = new NetherAtmosphere();
+        getServer().getScheduler().runTaskTimer(this, atmosphere, 20L, 10L);
+        getServer().getPluginManager().registerEvents(new SpawnRules(), this);
     }
 
     private void loadSettings() {
         reloadConfig();
-        borderSize = getConfig().getInt("border-size", 5500);
+        borderSize = getConfig().getInt("border-size", 6000);
         glowstonePerChunk = getConfig().getDouble("nether-glowstone-per-chunk", 0.35);
         ores.clear();
         ConfigurationSection sec = getConfig().getConfigurationSection("ores");
@@ -83,25 +85,6 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
 
     public double glowstonePerChunk() {
         return glowstonePerChunk;
-    }
-
-    private final java.util.Set<java.util.UUID> darkPlayers = new java.util.HashSet<>();
-
-    /** Inside the Nether zone it is always night for that player (only their own sky changes). */
-    private void updateNetherDarkness() {
-        for (Player p : Bukkit.getOnlinePlayers()) {
-            boolean dark = false;
-            if (p.getWorld().getGenerator() instanceof IslandGenerator) {
-                WorldModel m = WorldModel.get(p.getWorld().getSeed());
-                WorldModel.Sample sm = m.sample(p.getLocation().getBlockX(), p.getLocation().getBlockZ());
-                dark = sm.zone() == Zone.NETHER && sm.s() > 110;
-            }
-            if (dark && darkPlayers.add(p.getUniqueId())) {
-                p.setPlayerTime(18000L, false);
-            } else if (!dark && darkPlayers.remove(p.getUniqueId())) {
-                p.resetPlayerTime();
-            }
-        }
     }
 
     @Override

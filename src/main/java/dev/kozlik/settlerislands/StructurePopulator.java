@@ -15,6 +15,7 @@ public final class StructurePopulator extends BlockPopulator {
         StructurePlan plan = StructurePlan.get(m, info.getSeed());
         Builder b = new Builder(region, m, chunkX, chunkZ, info.getMinHeight(), info.getMaxHeight());
         plan.village.build(b);
+        plan.harbour.build(b);
         plan.fortress.build(b);
         for (Camp c : plan.camps) c.build(b);
         for (Pier p : plan.piers) p.build(b);

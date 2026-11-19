@@ -1,6 +1,5 @@
 package dev.kozlik.settlerislands;
 
-import org.bukkit.Material;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Villager;
 
@@ -27,13 +26,16 @@ public final class StructurePlan {
     }
 
     /** Things that need the live world (entities, spawner types, loot) and are done when the chunk first loads. */
-    public sealed interface Task permits SpawnVillager, SetSpawner, SetLoot {
+    public sealed interface Task permits SpawnVillager, SetSpawner, SetLoot, SpawnBoat {
         int x();
 
         int z();
     }
 
-    public record SpawnVillager(int x, int y, int z, Villager.Profession profession, boolean camp, Material workstation) implements Task {
+    public record SpawnVillager(int x, int y, int z, Villager.Profession profession, boolean camp) implements Task {
+    }
+
+    public record SpawnBoat(int x, int y, int z, EntityType type) implements Task {
     }
 
     public record SetSpawner(int x, int y, int z, EntityType type) implements Task {
@@ -50,6 +52,7 @@ public final class StructurePlan {
 
     public final Village village;
     public final Fortress fortress;
+    public final Harbour harbour;
     public final List<Camp> camps = new ArrayList<>();
     public final List<Pier> piers = new ArrayList<>();
     public final List<Task> tasks = new ArrayList<>();
@@ -57,29 +60,30 @@ public final class StructurePlan {
     private StructurePlan(WorldModel m) {
         Layout l = m.layout();
 
-        // Meadow: big harbour in the east bay, camp next to it, village inland
+        // Meadow: main harbour in the east bay, village inland, the street joins them
         Layout.Island meadow = l.find("meadow");
-        for (double a : new double[]{-9, -3, 3, 9}) piers.add(new Pier(coast(m, meadow, a), 34, false));
-        camps.add(new Camp(coast(m, meadow, -17), Villager.Profession.CARTOGRAPHER, Material.CARTOGRAPHY_TABLE, Material.WHITE_WOOL));
         Coast bay = coast(m, meadow, 0);
-        village = new Village(m, bay.px(-190, 0), bay.pz(-190, 0), seedOf(l));
+        harbour = new Harbour(bay);
+        village = new Village(m, bay.px(-190, 0), bay.pz(-190, 0), seedOf(l), 190 - 12);
+        camps.add(new Camp(coast(m, meadow, -30), Villager.Profession.CARTOGRAPHER, "cartography_table", "blue_wool"));
 
         // Timberlands: cove port facing Meadow
         Layout.Island timber = l.find("timberlands");
-        camps.add(new Camp(coast(m, timber, 180), Villager.Profession.FLETCHER, Material.FLETCHING_TABLE, Material.GREEN_WOOL));
-        piers.add(new Pier(coast(m, timber, 172), 30, false));
-        piers.add(new Pier(coast(m, timber, 188), 30, false));
+        camps.add(new Camp(coast(m, timber, 180), Villager.Profession.FLETCHER, "fletching_table", "green_wool"));
+        piers.add(new Pier(coast(m, timber, 172), 30, true));
+        piers.add(new Pier(coast(m, timber, 188), 30, true));
 
-        camps.add(new Camp(coast(m, l.find("sandbanks"), 30), Villager.Profession.MASON, Material.STONECUTTER, Material.YELLOW_WOOL));
-        camps.add(new Camp(coast(m, l.find("ironstone"), 40), Villager.Profession.BUTCHER, Material.SMOKER, Material.GRAY_WOOL));
-        camps.add(new Camp(coast(m, l.find("highlands"), 40), Villager.Profession.SHEPHERD, Material.LOOM, Material.LIGHT_BLUE_WOOL));
-        camps.add(new Camp(coast(m, l.find("nether"), 35), Villager.Profession.CLERIC, Material.BREWING_STAND, Material.RED_WOOL));
+        camps.add(new Camp(coast(m, l.find("sandbanks"), 30), Villager.Profession.MASON, "stonecutter", "yellow_wool"));
+        camps.add(new Camp(coast(m, l.find("ironstone"), 40), Villager.Profession.BUTCHER, "smoker", "gray_wool"));
+        camps.add(new Camp(coast(m, l.find("highlands"), 40), Villager.Profession.SHEPHERD, "loom", "light_blue_wool"));
+        camps.add(new Camp(coast(m, l.find("nether"), 150), Villager.Profession.CLERIC, "brewing_stand", "red_wool"));
 
         Layout.Island nether = l.find("nether");
-        fortress = new Fortress((int) nether.cx - 40, (int) nether.cz - 10);
+        fortress = new Fortress((int) nether.cx + 40, (int) nether.cz);
 
         village.collectTasks(tasks);
         fortress.collectTasks(tasks);
+        harbour.collectTasks(tasks);
         for (Camp c : camps) c.collectTasks(m, tasks);
     }
 

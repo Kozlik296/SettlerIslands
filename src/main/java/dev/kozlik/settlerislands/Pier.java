@@ -3,7 +3,7 @@ package dev.kozlik.settlerislands;
 import org.bukkit.Material;
 
 /** A wooden pier on posts, running from a coast point straight out to sea. */
-public record Pier(StructurePlan.Coast coast, int length, boolean unused) {
+public record Pier(StructurePlan.Coast coast, int length, boolean railed) {
 
     public static final int DECK = WorldModel.WATER_TOP + 1;
 
@@ -27,6 +27,10 @@ public record Pier(StructurePlan.Coast coast, int length, boolean unused) {
                 if (!b.in(x, z)) continue;
                 for (int y = b.ground(x, z) + 1; y < DECK; y++) b.set(x, y, z, Material.SPRUCE_LOG);
                 b.set(x, DECK, z, Material.SPRUCE_LOG);
+                if (railed && t % 8 == 2 && t + 4 <= length) {
+                    b.set(x, DECK + 1, z, Material.SPRUCE_FENCE);
+                    b.set(x, DECK + 2, z, Material.LANTERN);
+                }
                 if (t + 4 > length) {
                     b.set(x, DECK + 1, z, Material.SPRUCE_FENCE);
                     b.set(x, DECK + 2, z, Material.LANTERN);

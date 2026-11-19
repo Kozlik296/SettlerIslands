@@ -24,7 +24,7 @@ worlds:
     generator: SettlerIslands
 ```
 
-Then pre-generate the whole map once with Chunky (radius 2750, centred on 0,0) before players join.
+Then pre-generate the whole map once with Chunky (radius 3000, centred on 0,0) before players join.
 
 ## Config
 `config.yml` sets the world border size and the ore amounts per zone (approximate number of ore blocks

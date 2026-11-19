@@ -4,93 +4,75 @@ import org.bukkit.Material;
 import org.bukkit.entity.Villager;
 
 import java.util.List;
+import java.util.Map;
 
 /**
- * A trader camp at a natural harbour: a pier out to sea, a path up from the water,
- * a small cleared yard with a wool tent, a campfire, barrels, a workstation and one villager.
+ * A trader camp at a natural harbour: a pier, a path up from the water and a 23 x 23 yard with
+ * a big tent (with the villager's bed), a market stall with the workstation, a campfire with
+ * benches, crates, hay and lanterns. The villager can walk around and always comes back to its bed.
  */
 public final class Camp {
 
-    private static final int YARD_T = -24;   // yard centre, 24 blocks inland from the coast
-    private static final int PATH_LEN = 18;
+    private static final int CENTRE_T = -27;       // yard centre, blocks inland from the coast
+    private static final int PATH_END = -15;
 
     private final StructurePlan.Coast coast;
     private final Villager.Profession profession;
-    private final Material workstation;
-    private final Material wool;
+    private final Map<String, String> vars;
     private final Pier pier;
 
-    public Camp(StructurePlan.Coast coast, Villager.Profession profession, Material workstation, Material wool) {
+    public Camp(StructurePlan.Coast coast, Villager.Profession profession, String station, String wool) {
         this.coast = coast;
         this.profession = profession;
-        this.workstation = workstation;
-        this.wool = wool;
-        this.pier = new Pier(coast, 30, false);
+        this.vars = Map.of("station", station, "wool", wool, "wool2", "white_wool");
+        this.pier = new Pier(coast, 30, true);
     }
 
     private int yardY(WorldModel m) {
-        int x = coast.px(YARD_T, 0), z = coast.pz(YARD_T, 0);
-        return Math.max(Pier.DECK, m.height(x, z, m.sample(x, z)));
+        int x = coast.px(CENTRE_T, 0), z = coast.pz(CENTRE_T, 0);
+        return Math.max(Pier.DECK + 1, m.height(x, z, m.sample(x, z)));
+    }
+
+    private int rot() {
+        return Template.rotationFacing(coast.dx(), coast.dz());
+    }
+
+    private int[] origin(Template tp) {
+        int rot = rot();
+        int[] off = tp.offset(tp.w / 2, tp.d / 2, rot);
+        return new int[]{coast.px(CENTRE_T, 0) - off[0], coast.pz(CENTRE_T, 0) - off[1]};
     }
 
     public void build(Builder b) {
-        StructurePlan.Coast c = coast;
-        int yx = c.px(YARD_T, 0), yz = c.pz(YARD_T, 0);
-        if (!b.touches(yx - 40, yz - 40, yx + 40, yz + 40)) return;
+        int yx = coast.px(CENTRE_T, 0), yz = coast.pz(CENTRE_T, 0);
+        if (!b.touches(yx - 45, yz - 45, yx + 45, yz + 45)) return;
         pier.build(b);
-        int yardY = yardY(b.model);
+        int y = yardY(b.model);
         boolean nether = b.model.sample(yx, yz).zone() == Zone.NETHER;
         Material pathMat = nether ? Material.POLISHED_BLACKSTONE_BRICKS : Material.STONE_BRICKS;
-        Material yardMat = nether ? Material.BLACKSTONE : Material.COARSE_DIRT;
 
         // path from the pier up to the yard
-        for (double t = 0; t >= -PATH_LEN; t -= 0.5) {
-            int y = (int) Math.round(Pier.DECK + (yardY - Pier.DECK) * (-t) / PATH_LEN);
-            for (double side = -1; side <= 1; side += 0.5) {
-                int x = c.px(t, side), z = c.pz(t, side);
+        for (double t = 0; t >= PATH_END; t -= 0.5) {
+            int py = (int) Math.round(Pier.DECK + (y - Pier.DECK) * (-t) / -PATH_END);
+            for (double side = -1.5; side <= 1.5; side += 0.5) {
+                int x = coast.px(t, side), z = coast.pz(t, side);
                 if (!b.in(x, z)) continue;
-                b.foundation(x, z, y, Material.COBBLESTONE);
-                b.set(x, y, z, pathMat);
-                b.clear(x, z, y + 1, y + 4);
+                b.foundation(x, z, py, Material.COBBLESTONE);
+                b.set(x, py, z, pathMat);
+                b.clear(x, z, py + 1, py + 4);
             }
         }
-        // level yard
-        for (double t = YARD_T - 6; t <= YARD_T + 6; t += 0.5) {
-            for (double side = -6; side <= 6; side += 0.5) {
-                int x = c.px(t, side), z = c.pz(t, side);
-                if (!b.in(x, z)) continue;
-                b.foundation(x, z, yardY, Material.DIRT);
-                b.set(x, yardY, z, yardMat);
-                b.clear(x, z, yardY + 1, yardY + 10);
-            }
-        }
-        // A-frame tent, 6 long, ridge 3 high
-        for (double t = YARD_T - 4; t <= YARD_T + 1; t += 0.5) {
-            for (double side = -2; side <= 2; side += 0.5) {
-                int x = c.px(t, side), z = c.pz(t, side);
-                if (!b.in(x, z)) continue;
-                int top = 3 - (int) Math.round(Math.abs(side));
-                b.set(x, yardY + Math.max(1, top), z, wool);
-                if (Math.abs(side) >= 2) b.set(x, yardY + 1, z, wool);
-            }
-        }
-        set(b, YARD_T + 5, 0, yardY + 1, "minecraft:campfire[lit=true]");
-        set(b, YARD_T - 1, 3, yardY + 1, Material.BARREL);
-        set(b, YARD_T + 1, 3, yardY + 1, Material.BARREL);
-        set(b, YARD_T - 3, -3, yardY + 1, Material.BARREL);
-        set(b, YARD_T - 3, 1, yardY + 1, workstation);
-    }
-
-    private void set(Builder b, double t, double side, int y, Material mat) {
-        b.set(coast.px(t, side), y, coast.pz(t, side), mat);
-    }
-
-    private void set(Builder b, double t, double side, int y, String data) {
-        b.set(coast.px(t, side), y, coast.pz(t, side), data);
+        Template tp = Template.get("camp");
+        int rot = rot();
+        int[] o = origin(tp);
+        b.level(o[0] - 1, o[1] - 1, o[0] + tp.sizeX(rot), o[1] + tp.sizeZ(rot), y, nether ? Material.BLACKSTONE : Material.GRASS_BLOCK, 14);
+        tp.place(b, o[0], y, o[1], rot, vars, true);
     }
 
     public void collectTasks(WorldModel m, List<StructurePlan.Task> tasks) {
-        int y = yardY(m) + 1;
-        tasks.add(new StructurePlan.SpawnVillager(coast.px(YARD_T - 1, -1), y, coast.pz(YARD_T - 1, -1), profession, true, workstation));
+        Template tp = Template.get("camp");
+        int[] o = origin(tp);
+        int[] off = tp.offset(tp.w / 2, 12, rot());
+        tasks.add(new StructurePlan.SpawnVillager(o[0] + off[0], yardY(m) + 1, o[1] + off[1], profession, true));
     }
 }

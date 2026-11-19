@@ -48,6 +48,35 @@ public final class Builder {
         }
     }
 
+    public void set(int x, int y, int z, BlockData data) {
+        if (in(x, z) && y > minY && y < maxY) region.setBlockData(x, y, z, data);
+    }
+
+    /**
+     * Levels the ground in a box to height y: cuts away anything above (up to y + clearUp),
+     * fills dirt below and puts the top block at y. Only for columns in this chunk.
+     */
+    public void level(int x1, int z1, int x2, int z2, int y, Material top, int clearUp) {
+        int ax = Math.max(Math.min(x1, x2), minX), bx = Math.min(Math.max(x1, x2), minX + 15);
+        int az = Math.max(Math.min(z1, z2), minZ), bz = Math.min(Math.max(z1, z2), minZ + 15);
+        for (int x = ax; x <= bx; x++) {
+            for (int z = az; z <= bz; z++) {
+                foundation(x, z, y, Material.DIRT);
+                set(x, y, z, top);
+                clear(x, z, y + 1, y + clearUp);
+            }
+        }
+    }
+
+    /** Deterministic 0..999 value for a position, for random-looking but stable choices. */
+    public static int hash(int x, int y, int z) {
+        int h = x * 73856093 ^ y * 19349663 ^ z * 83492791;
+        h ^= (h >>> 13);
+        h *= 0x5bd1e995;
+        h ^= (h >>> 15);
+        return Math.floorMod(h, 1000);
+    }
+
     public Material get(int x, int y, int z) {
         return region.getType(x, y, z);
     }

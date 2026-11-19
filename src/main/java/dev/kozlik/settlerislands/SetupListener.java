@@ -65,11 +65,11 @@ public final class SetupListener implements Listener {
                     villager.setRemoveWhenFarAway(false);
                     if (v.camp()) {
                         villager.setInvulnerable(true);
-                        villager.setAware(false);
                         villager.getPersistentDataContainer().set(campKey, PersistentDataType.BYTE, (byte) 1);
                     }
                 });
             }
+            case StructurePlan.SpawnBoat boat -> world.spawnEntity(new Location(world, boat.x() + 0.5, boat.y(), boat.z() + 0.5), boat.type());
             case StructurePlan.SetSpawner s -> {
                 Block block = world.getBlockAt(s.x(), s.y(), s.z());
                 if (block.getState() instanceof CreatureSpawner cs) {
