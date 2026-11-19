@@ -2,9 +2,15 @@ package dev.kozlik.settlerislands;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.block.BlockFace;
+import org.bukkit.block.data.type.Fence;
+import org.bukkit.block.data.type.Gate;
+import org.bukkit.block.data.type.Wall;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.generator.LimitedRegion;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -38,18 +44,138 @@ public final class Builder {
         return Math.max(x1, x2) >= minX && Math.min(x1, x2) < minX + 16 && Math.max(z1, z2) >= minZ && Math.min(z1, z2) < minZ + 16;
     }
 
+    private final List<int[]> connectables = new ArrayList<>();
+
     public void set(int x, int y, int z, Material mat) {
-        if (in(x, z) && y > minY && y < maxY) region.setType(x, y, z, mat);
+        if (in(x, z) && y > minY && y < maxY) {
+            region.setType(x, y, z, mat);
+            if (connectable(mat)) connectables.add(new int[]{x, y, z});
+        }
     }
 
     public void set(int x, int y, int z, String data) {
         if (in(x, z) && y > minY && y < maxY) {
-            region.setBlockData(x, y, z, Template.safeData(data));
+            set(x, y, z, Template.safeData(data));
         }
     }
 
     public void set(int x, int y, int z, BlockData data) {
-        if (in(x, z) && y > minY && y < maxY) region.setBlockData(x, y, z, data);
+        if (in(x, z) && y > minY && y < maxY) {
+            region.setBlockData(x, y, z, data);
+            if (data instanceof Fence || data instanceof Wall) connectables.add(new int[]{x, y, z});
+        }
+    }
+
+    // --------------------------------------------------------- fence connections
+
+    private static boolean connectable(Material m) {
+        String n = m.name();
+        return (n.endsWith("_FENCE") || n.endsWith("_PANE") || n.equals("IRON_BARS")
+                || (n.endsWith("_WALL") && !n.contains("SIGN") && !n.contains("BANNER") && !n.contains("TORCH")
+                && !n.contains("HEAD") && !n.contains("SKULL") && !n.contains("FAN")));
+    }
+
+    /** 0 wooden fence, 1 nether brick fence, 2 pane / bars, 3 wall, -1 none. */
+    private static int family(Material m) {
+        String n = m.name();
+        if (n.equals("NETHER_BRICK_FENCE")) return 1;
+        if (n.endsWith("_FENCE")) return 0;
+        if (n.endsWith("_PANE") || n.equals("IRON_BARS")) return 2;
+        if (connectable(m) && n.endsWith("_WALL")) return 3;
+        return -1;
+    }
+
+    private boolean joins(int fam, int x, int y, int z) {
+        if (!region.isInRegion(x, y, z)) return false;
+        BlockData nb = region.getBlockData(x, y, z);
+        Material m = nb.getMaterial();
+        if (m.isOccluding()) return true;
+        int f = family(m);
+        if (nb instanceof Gate) return fam == 0 || fam == 3;
+        return switch (fam) {
+            case 0 -> f == 0;
+            case 1 -> f == 1;
+            case 2, 3 -> f == 2 || f == 3;
+            default -> false;
+        };
+    }
+
+    private static final BlockFace[] SIDES = {BlockFace.NORTH, BlockFace.EAST, BlockFace.SOUTH, BlockFace.WEST};
+
+    private void connect(int x, int y, int z) {
+        if (!region.isInRegion(x, y, z)) return;
+        BlockData bd = region.getBlockData(x, y, z);
+        int fam = family(bd.getMaterial());
+        if (fam < 0) return;
+        if (bd instanceof Fence fence) {
+            for (BlockFace f : SIDES) {
+                if (fence.getAllowedFaces().contains(f)) fence.setFace(f, joins(fam, x + f.getModX(), y, z + f.getModZ()));
+            }
+            region.setBlockData(x, y, z, fence);
+        } else if (bd instanceof Wall wall) {
+            boolean[] j = new boolean[4];
+            for (int i = 0; i < 4; i++) {
+                BlockFace f = SIDES[i];
+                j[i] = joins(fam, x + f.getModX(), y, z + f.getModZ());
+                wall.setHeight(f, j[i] ? Wall.Height.LOW : Wall.Height.NONE);
+            }
+            boolean straight = (j[0] && j[2] && !j[1] && !j[3]) || (j[1] && j[3] && !j[0] && !j[2]);
+            wall.setUp(!straight || !region.getType(x, y + 1, z).isAir());
+            region.setBlockData(x, y, z, wall);
+        }
+    }
+
+    /** Joins every fence, pane and wall placed in this chunk to its neighbours (and updates the neighbours). */
+    public void connectAll() {
+        for (int[] p : connectables) {
+            connect(p[0], p[1], p[2]);
+            for (BlockFace f : SIDES) connect(p[0] + f.getModX(), p[1], p[2] + f.getModZ());
+        }
+        connectables.clear();
+    }
+
+    // ------------------------------------------------------------- tree clearing
+
+    private static boolean trunk(Material m) {
+        String n = m.name();
+        return n.endsWith("_LOG") || n.endsWith("_WOOD") || n.endsWith("_STEM") || n.endsWith("_HYPHAE")
+                || m == Material.MUSHROOM_STEM || m == Material.MANGROVE_ROOTS || m == Material.MUDDY_MANGROVE_ROOTS;
+    }
+
+    private static boolean crown(Material m) {
+        String n = m.name();
+        return n.endsWith("_LEAVES") || m == Material.NETHER_WART_BLOCK || m == Material.WARPED_WART_BLOCK
+                || m == Material.SHROOMLIGHT || n.startsWith("WEEPING_VINES") || n.startsWith("TWISTING_VINES")
+                || m == Material.VINE || m == Material.RED_MUSHROOM_BLOCK || m == Material.BROWN_MUSHROOM_BLOCK
+                || m == Material.COCOA || m == Material.BEE_NEST || n.contains("HANGING_MOSS");
+    }
+
+    /**
+     * Removes trees and giant fungi above the ground in a box (only in this chunk) before something is
+     * built there, including the crowns around removed trunks, so nothing is left floating.
+     */
+    public void clearTrees(int x1, int z1, int x2, int z2) {
+        int ax = Math.max(Math.min(x1, x2), minX), bx = Math.min(Math.max(x1, x2), minX + 15);
+        int az = Math.max(Math.min(z1, z2), minZ), bz = Math.min(Math.max(z1, z2), minZ + 15);
+        for (int x = ax; x <= bx; x++) {
+            for (int z = az; z <= bz; z++) {
+                int g = ground(x, z);
+                for (int y = g + 1; y <= Math.min(maxY - 1, g + 45); y++) {
+                    Material m = region.getType(x, y, z);
+                    if (trunk(m)) {
+                        region.setType(x, y, z, Material.AIR);
+                        if (y > g + 2) clearCrown(x, y, z);
+                    } else if (crown(m)) region.setType(x, y, z, Material.AIR);
+                }
+            }
+        }
+    }
+
+    private void clearCrown(int cx, int cy, int cz) {
+        for (int x = cx - 3; x <= cx + 3; x++)
+            for (int z = cz - 3; z <= cz + 3; z++)
+                for (int y = cy - 3; y <= cy + 4; y++)
+                    if (region.isInRegion(x, y, z) && crown(region.getType(x, y, z))) region.setType(x, y, z, Material.AIR);
     }
 
     /**

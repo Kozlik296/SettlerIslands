@@ -112,6 +112,21 @@ public final class Template {
         return dz > 0 ? 0 : 2;
     }
 
+    /** All cells whose block name contains the text, e.g. "_bed[part=head": {x, y, z} in template space. */
+    public List<int[]> findContaining(String text) {
+        List<int[]> out = new ArrayList<>();
+        for (int y = 0; y < h; y++)
+            for (int z = 0; z < d; z++)
+                for (int x = 0; x < w; x++)
+                    if (palette[index(x, y, z)].contains(text)) out.add(new int[]{x, y, z});
+        return out;
+    }
+
+    /** The block name stored in a template cell. */
+    public String blockAt(int x, int y, int z) {
+        return palette[index(x, y, z)];
+    }
+
     /** All cells whose block starts with the given name, e.g. "minecraft:spawner": {x, y, z} in template space. */
     public List<int[]> find(String prefix) {
         List<Integer> ids = new ArrayList<>();
@@ -201,6 +216,8 @@ public final class Template {
             while (m.find()) m.appendReplacement(sb, "axis=" + (m.group(1).equals("x") ? "z" : "x"));
             m.appendTail(sb);
             s = sb.toString();
+            if (s.contains("shape=north_south")) s = s.replace("shape=north_south", "shape=east_west");
+            else if (s.contains("shape=east_west")) s = s.replace("shape=east_west", "shape=north_south");
         }
         return s;
     }

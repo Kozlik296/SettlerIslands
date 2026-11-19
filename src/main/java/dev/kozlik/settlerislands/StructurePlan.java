@@ -32,16 +32,18 @@ public final class StructurePlan {
     }
 
     /** Things that need the live world (entities, spawner types, loot) and are done when the chunk first loads. */
-    public sealed interface Task permits SpawnVillager, SetSpawner, SetLoot, SpawnBoat {
+    public sealed interface Task permits SpawnVillager, SetSpawner, SetLoot, SpawnEntity {
         int x();
 
         int z();
     }
 
-    public record SpawnVillager(int x, int y, int z, Villager.Profession profession, boolean camp) implements Task {
+    /** trades: id of a fixed trade list in trades.yml, or null for normal village trades. */
+    public record SpawnVillager(int x, int y, int z, Villager.Profession profession, boolean camp, String trades) implements Task {
     }
 
-    public record SpawnBoat(int x, int y, int z, EntityType type) implements Task {
+    /** Boats at the piers, animals in the pens. */
+    public record SpawnEntity(int x, int y, int z, EntityType type) implements Task {
     }
 
     public record SetSpawner(int x, int y, int z, EntityType type) implements Task {
@@ -59,7 +61,7 @@ public final class StructurePlan {
     public final Village village;
     public final Fortress fortress;
     public final Harbour harbour;
-    public final List<Camp> camps = new ArrayList<>();
+    public final List<Settlement> settlements = new ArrayList<>();
     public final List<Pier> piers = new ArrayList<>();
     public final List<Task> tasks = new ArrayList<>();
 
@@ -71,18 +73,18 @@ public final class StructurePlan {
         Coast bay = coast(m, meadow, 0);
         harbour = new Harbour(bay);
         village = new Village(m, bay.px(-190, 0), bay.pz(-190, 0), seedOf(l), bay.px(-13, 0), bay.pz(-13, 0));
-        camps.add(new Camp(m, meadow, -30, Villager.Profession.CARTOGRAPHER, "cartography_table", "blue_wool"));
 
         // Timberlands: cove port facing Meadow
         Layout.Island timber = l.find("timberlands");
-        camps.add(new Camp(m, timber, 180, Villager.Profession.FLETCHER, "fletching_table", "green_wool"));
+        settlements.add(new Settlement(m, timber, 180, "timberlands"));
         piers.add(new Pier(coast(m, timber, 170).snapped(), 30, true));
         piers.add(new Pier(coast(m, timber, 190).snapped(), 30, true));
 
-        camps.add(new Camp(m, l.find("sandbanks"), 30, Villager.Profession.MASON, "stonecutter", "yellow_wool"));
-        camps.add(new Camp(m, l.find("ironstone"), 40, Villager.Profession.BUTCHER, "smoker", "gray_wool"));
-        camps.add(new Camp(m, l.find("highlands"), 40, Villager.Profession.SHEPHERD, "loom", "light_blue_wool"));
-        camps.add(new Camp(m, l.find("nether"), 150, Villager.Profession.CLERIC, "brewing_stand", "red_wool"));
+        // the other settlements, each on the side of its island that faces the way in
+        settlements.add(new Settlement(m, l.find("sandbanks"), 120, "sandbanks"));
+        settlements.add(new Settlement(m, l.find("ironstone"), 40, "ironstone"));
+        settlements.add(new Settlement(m, l.find("highlands"), 40, "highlands"));
+        settlements.add(new Settlement(m, l.find("nether"), 150, "nether"));
 
         Layout.Island nether = l.find("nether");
         fortress = new Fortress((int) nether.cx + 40, (int) nether.cz);
@@ -90,7 +92,7 @@ public final class StructurePlan {
         village.collectTasks(tasks);
         fortress.collectTasks(tasks);
         harbour.collectTasks(tasks);
-        for (Camp c : camps) c.collectTasks(m, tasks);
+        for (Settlement st : settlements) st.collectTasks(tasks);
     }
 
     private static long seedOf(Layout l) {

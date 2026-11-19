@@ -27,6 +27,8 @@ public final class Fortress {
 
     public void build(Builder b) {
         if (!b.touches(fx - FLAT_X - FALLOFF, fz - FLAT_Z - FALLOFF, fx + FLAT_X + FALLOFF, fz + FLAT_Z + FALLOFF)) return;
+        int r = FALLOFF + 14;
+        b.clearTrees(fx - FLAT_X - r, fz - FLAT_Z - r, fx + FLAT_X + r, fz + FLAT_Z + r);
         plateau(b);
         Template.get("fortress").place(b, fx - OX, BASE, fz - OZ, 0, null, true);
     }
@@ -46,7 +48,7 @@ public final class Fortress {
                 Material top = h < 500 ? Material.NETHERRACK : h < 700 ? Material.BLACKSTONE : h < 850 ? Material.SOUL_SOIL : Material.CRIMSON_NYLIUM;
                 for (int yy = Math.min(natural, y) - 2; yy < y; yy++) b.set(x, yy, z, Material.NETHERRACK);
                 b.set(x, y, z, top);
-                b.clear(x, z, y + 1, Math.max(y, natural) + (out == 0 ? 25 : 12));
+                b.clear(x, z, y + 1, Math.max(y, natural) + (out == 0 ? 30 : 16));
             }
         }
     }

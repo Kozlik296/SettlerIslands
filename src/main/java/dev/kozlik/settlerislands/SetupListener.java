@@ -11,6 +11,8 @@ import org.bukkit.block.CreatureSpawner;
 import org.bukkit.entity.Villager;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.entity.VillagerAcquireTradeEvent;
+import org.bukkit.event.entity.VillagerCareerChangeEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.loot.LootTable;
 import org.bukkit.loot.Lootable;
@@ -25,11 +27,13 @@ public final class SetupListener implements Listener {
     private final SettlerIslands plugin;
     private final NamespacedKey doneKey;
     public final NamespacedKey campKey;
+    public final NamespacedKey tradesKey;
 
     public SetupListener(SettlerIslands plugin) {
         this.plugin = plugin;
         this.doneKey = new NamespacedKey(plugin, "setup_done");
         this.campKey = new NamespacedKey(plugin, "camp_trader");
+        this.tradesKey = new NamespacedKey(plugin, "trades");
     }
 
     @EventHandler
@@ -54,13 +58,40 @@ public final class SetupListener implements Listener {
         });
     }
 
+    /** Gives a villager its fixed trade list; it keeps its job and never levels up. */
+    public void applyTrades(Villager villager, Trades.Trader trader) {
+        villager.setProfession(trader.profession());
+        villager.setVillagerExperience(1);
+        villager.setVillagerLevel(1);
+        villager.setRecipes(Trades.copy(trader));
+        villager.getPersistentDataContainer().set(tradesKey, PersistentDataType.STRING, trader.id());
+    }
+
+    private boolean fixed(Villager v) {
+        return v.getPersistentDataContainer().has(tradesKey, PersistentDataType.STRING);
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onAcquireTrade(VillagerAcquireTradeEvent event) {
+        if (event.getEntity() instanceof Villager v && fixed(v)) event.setCancelled(true);
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onCareerChange(VillagerCareerChangeEvent event) {
+        if (fixed(event.getEntity())) event.setCancelled(true);
+    }
+
     private void run(World world, StructurePlan.Task task) {
         switch (task) {
             case StructurePlan.SpawnVillager v -> {
                 Location loc = new Location(world, v.x() + 0.5, v.y(), v.z() + 0.5);
+                Trades.Trader trader = v.trades() != null ? Trades.get(v.trades()) : null;
+                if (v.trades() != null && trader == null) plugin.getLogger().warning("No trader in trades.yml for " + v.trades());
+                Villager.Profession prof = trader != null ? trader.profession() : v.profession();
                 world.spawn(loc, Villager.class, villager -> {
-                    villager.setProfession(v.profession());
-                    if (v.profession() != Villager.Profession.NONE) villager.setVillagerExperience(1);
+                    villager.setProfession(prof);
+                    if (prof != Villager.Profession.NONE) villager.setVillagerExperience(1);
+                    if (trader != null) applyTrades(villager, trader);
                     villager.setPersistent(true);
                     villager.setRemoveWhenFarAway(false);
                     if (v.camp()) {
@@ -69,7 +100,7 @@ public final class SetupListener implements Listener {
                     }
                 });
             }
-            case StructurePlan.SpawnBoat boat -> world.spawnEntity(new Location(world, boat.x() + 0.5, boat.y(), boat.z() + 0.5), boat.type());
+            case StructurePlan.SpawnEntity e -> world.spawnEntity(new Location(world, e.x() + 0.5, e.y(), e.z() + 0.5), e.type());
             case StructurePlan.SetSpawner s -> {
                 Block block = world.getBlockAt(s.x(), s.y(), s.z());
                 if (block.getState() instanceof CreatureSpawner cs) {

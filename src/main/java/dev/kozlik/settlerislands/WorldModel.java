@@ -21,7 +21,7 @@ public final class WorldModel {
     public static final int WATER_TOP = SEA_LEVEL - 1;
 
     /** One column of the world. s = blocks from the coast (positive on land). */
-    public record Sample(Zone zone, double s, Zone nearZone, Layout.Island island) {
+    public record Sample(Zone zone, double s, Zone nearZone, Layout.Island island, double ironS) {
         public boolean land() {
             return s > 0;
         }
@@ -38,7 +38,7 @@ public final class WorldModel {
     }
 
     private final Layout layout = Layout.get();
-    private final SimplexOctaveGenerator coastA, coastB, floor, relA, relB, ridge, var, var2, lava, surf, caveA, caveB, caveC, warpA, warpB, ridge2, canyonG, canyonMask, crackG, crackMask;
+    private final SimplexOctaveGenerator coastA, coastB, floor, relA, relB, ridge, var, var2, lava, surf, caveA, caveB, caveC, entrance, mesa, warpA, warpB, ridge2, canyonG, canyonMask, crackG, crackMask;
     private volatile Map<Zone, Integer> zoneChunks;
 
     private WorldModel(long seed) {
@@ -56,6 +56,8 @@ public final class WorldModel {
         caveB = gen(seed, 12, 1);
         caveC = gen(seed, 13, 1);
         warpA = gen(seed, 14, 2);
+        entrance = gen(seed, 21, 1);
+        mesa = gen(seed, 22, 2);
         warpB = gen(seed, 15, 2);
         ridge2 = gen(seed, 16, 2);
         canyonG = gen(seed, 17, 2);
@@ -107,12 +109,10 @@ public final class WorldModel {
             }
         }
         // Ironstone is drawn over Gloomreach: where both overlap, the column is Ironstone.
-        if (iron != null && ironS > 0) {
-            best = iron;
-            bestS = ironS;
-        }
+        // s stays the distance to the sea, so the border between the halves is not treated as a coast.
+        if (iron != null && ironS > 0) best = iron;
         Zone zone = bestS > 0 ? best.zone : Zone.SEA;
-        return new Sample(zone, bestS, best.zone, best);
+        return new Sample(zone, bestS, best.zone, best, ironS);
     }
 
     /** Variety noise used to choose sub-biomes, from -1 to 1. */
@@ -137,14 +137,46 @@ public final class WorldModel {
             return (int) Math.max(6, y);
         }
         double beach = SEA_LEVEL + Math.min(sm.s() / 30.0, 1.0) * 2;
-        double rel = Math.max(1, relief(sm.zone(), x, z, sm.s()));
         Zone zone = sm.zone();
-        if (zone == Zone.IRONSTONE || zone == Zone.HIGHLANDS || zone == Zone.GLOOMREACH) rel *= smooth(sm.s(), 6, 60);
-        else if (zone == Zone.NETHER) rel = 14 * smooth(sm.s(), 4, 40) + rel * smooth(sm.s(), 40, 200);
-        else rel *= smooth(sm.s(), 15, 160);
+        double rel;
+        if (zone == Zone.IRONSTONE || zone == Zone.GLOOMREACH) {
+            // the two halves of one island: blend both landscapes across the border
+            double w = smooth(sm.ironS(), -60, 60);
+            double relI = w > 0 ? Math.max(1, relief(Zone.IRONSTONE, x, z, sm.s())) : 0;
+            double relG = w < 1 ? Math.max(1, relief(Zone.GLOOMREACH, x, z, sm.s())) : 0;
+            double coastF = smooth(sm.s(), 15, 180) * (1 - w) + smooth(sm.s(), 6, 60) * w;
+            rel = (relG * (1 - w) + relI * w) * coastF;
+        } else {
+            rel = Math.max(1, relief(zone, x, z, sm.s()));
+            if (zone == Zone.HIGHLANDS) rel *= smooth(sm.s(), 6, 60);
+            else if (zone == Zone.NETHER) rel = 14 * smooth(sm.s(), 4, 40) + rel * smooth(sm.s(), 40, 200);
+            else rel *= smooth(sm.s(), 15, 160);
+        }
         int h = (int) (beach + rel);
         if (zone == Zone.NETHER && lavaPool(x, z, sm)) h = LAVA_LEVEL - 4;
         return h;
+    }
+
+    // -------------------------------------------------------------- badlands
+
+    private Layout.Island sandIsland;
+
+    /** How far into the badlands half of Sandbanks a spot is (above 0 = badlands). */
+    public double badlands(int x, int z, Sample sm) {
+        if (sm.zone() != Zone.SANDBANKS) return -1;
+        if (sandIsland == null) sandIsland = layout.find("sandbanks");
+        return badlandsRaw(x, z);
+    }
+
+    private double badlandsRaw(int x, int z) {
+        if (sandIsland == null) sandIsland = layout.find("sandbanks");
+        return n(var, x, z, 260) * 0.5 + (x - sandIsland.cx) / sandIsland.hw * 0.9 + 0.1;
+    }
+
+    /** Flat-topped mesas with steep terracotta cliffs, two tiers. */
+    private double mesas(int x, int z) {
+        double m = n(mesa, x, z, 110);
+        return 26 * smooth(m, 0.08, 0.14) + 14 * smooth(m, 0.42, 0.47);
     }
 
     // --------------------------------------------------- natural mountain shapes
@@ -203,8 +235,13 @@ public final class WorldModel {
                 double dome = smooth(s, 10, 320);
                 yield carve(15 + dome * (20 + mountains(x, z, 280) * 95), x, z, dome, 45);
             }
-            case GLOOMREACH -> carve(8 + n(relA, x, z, 110) * 12 + mountains(x, z, 160) * 30, x, z, smooth(s, 10, 120), 22);
-            case SANDBANKS -> 2 + Math.abs(n(relA, x, z, 45)) * 7;
+            case GLOOMREACH -> carve(8 + n(relA, x, z, 110) * 12 + mountains(x, z, 160) * 30, x, z, smooth(s, 40, 160), 22);
+            case SANDBANKS -> {
+                double dunes = 2 + Math.abs(n(relA, x, z, 45)) * 7;
+                double bad = badlandsRaw(x, z);
+                double f = smooth(bad, 0.0, 0.25) * smooth(s, 50, 110);
+                yield dunes * (1 - f) + (4 + n(relB, x, z, 80) * 4 + mesas(x, z)) * f;
+            }
             case TIMBERLANDS -> carve(6 + n(relA, x, z, 140) * 12 + n(relB, x, z, 45) * 4 + mountains(x, z, 200) * 18, x, z, 1, 12);
             case NETHER -> netherRaw(x, z);
             case FAR_REEF -> 3 + n(relA, x, z, 70) * 7;
@@ -227,11 +264,19 @@ public final class WorldModel {
      * Only under land, never near the coast and never close to the surface.
      */
     public boolean cave(int x, int y, int z, Sample sm, int h, int minY) {
-        if (!sm.land() || sm.s() < 28 || y > h - 8 || y < minY + 6) return false;
-        boolean gloom = sm.zone() == Zone.GLOOMREACH;
-        // big open chambers
-        double cheese = caveA.noise(x / 70.0, y / 35.0, z / 70.0, 2.0, 0.5, true);
-        if (cheese > (gloom ? 0.48 : 0.62)) return true;
+        if (!sm.land() || sm.s() < 28 || y < minY + 6) return false;
+        Zone zone = sm.zone();
+        boolean gloom = zone == Zone.GLOOMREACH;
+        boolean hilly = zone == Zone.IRONSTONE || zone == Zone.HIGHLANDS || gloom || zone == Zone.TIMBERLANDS;
+        // in hilly zones some tunnels are allowed to break the surface: natural cave mouths
+        boolean opening = hilly && h > 75 && n(entrance, x, z, 90) > (gloom ? 0.15 : 0.35);
+        if (y > h - (opening ? 0 : 8)) return false;
+        boolean nearSurface = y > h - 8;
+        // big open chambers (only deep down)
+        if (!nearSurface) {
+            double cheese = caveA.noise(x / 70.0, y / 35.0, z / 70.0, 2.0, 0.5, true);
+            if (cheese > (gloom ? 0.48 : 0.62)) return true;
+        }
         // winding tunnels where two noise fields are both near zero
         double a = caveB.noise(x / 45.0, y / 28.0, z / 45.0, 2.0, 0.5, true);
         if (Math.abs(a) > 0.07) return false;
@@ -265,13 +310,19 @@ public final class WorldModel {
                 yield s(Material.STONE, Material.STONE, 1);
             }
             case GLOOMREACH -> {
-                if (beach) yield new Surface(Material.GRAVEL, Material.GRAVEL, 2, Material.STONE, Material.DEEPSLATE, 24, false);
+                if (sm.s() < 50 && h <= SEA_LEVEL + 3) {
+                    // a natural mixed shore
+                    int r = Builder.hash(x, 0, z);
+                    Material top = r < 350 ? Material.SAND : r < 600 ? Material.GRAVEL : r < 750 ? Material.MUD : r < 900 ? Material.COARSE_DIRT : Material.MOSSY_COBBLESTONE;
+                    yield new Surface(top, top == Material.MUD ? Material.MUD : Material.SAND, 3, Material.STONE, Material.DEEPSLATE, 24, false);
+                }
                 Material top = g > 0.3 ? Material.PODZOL : g < -0.35 ? Material.COARSE_DIRT : Material.GRASS_BLOCK;
+                if (sm.s() < 80 && Builder.hash(x, 1, z) < 300) top = Material.COARSE_DIRT;
                 yield new Surface(top, Material.DIRT, 2, Material.STONE, Material.DEEPSLATE, 24, false);
             }
             case SANDBANKS -> {
-                if (!beach && sm.s() >= 50 && v > 0.35)
-                    yield new Surface(Material.RED_SAND, Material.TERRACOTTA, 14, Material.SANDSTONE, Material.DEEPSLATE, 0, true);
+                if (!beach && sm.s() >= 50 && badlands(x, z, sm) > 0)
+                    yield new Surface(Material.RED_SAND, Material.TERRACOTTA, 80, Material.TERRACOTTA, Material.DEEPSLATE, 0, true);
                 yield new Surface(Material.SAND, Material.SAND, 5, Material.SANDSTONE, Material.DEEPSLATE, 0, false);
             }
             case TIMBERLANDS -> {
@@ -347,8 +398,8 @@ public final class WorldModel {
         return switch (sm.zone()) {
             case MEADOW -> beach ? Biome.BEACH : v < -0.35 ? Biome.FLOWER_FOREST : v < 0.1 ? Biome.PLAINS : v < 0.45 ? Biome.MEADOW : Biome.SUNFLOWER_PLAINS;
             case IRONSTONE -> y < 40 ? Biome.DRIPSTONE_CAVES : sm.s() < 40 ? Biome.STONY_SHORE : h > 120 ? Biome.STONY_PEAKS : Biome.WINDSWEPT_GRAVELLY_HILLS;
-            case GLOOMREACH -> y < 30 ? Biome.DRIPSTONE_CAVES : beach ? Biome.STONY_SHORE : v > 0.4 ? Biome.PALE_GARDEN : Biome.DARK_FOREST;
-            case SANDBANKS -> beach || sm.s() < 50 ? Biome.BEACH : v > 0.35 ? Biome.BADLANDS : Biome.DESERT;
+            case GLOOMREACH -> y < 30 ? Biome.DRIPSTONE_CAVES : (sm.s() < 50 && h <= SEA_LEVEL + 3) ? Biome.BEACH : v > 0.4 ? Biome.PALE_GARDEN : Biome.DARK_FOREST;
+            case SANDBANKS -> beach || sm.s() < 50 ? Biome.BEACH : badlands(x, z, sm) > 0 ? (h > 85 ? Biome.WOODED_BADLANDS : Biome.BADLANDS) : Biome.DESERT;
             case TIMBERLANDS -> {
                 if (beach) yield Biome.BEACH;
                 if (mangrove(x, z, sm)) yield Biome.MANGROVE_SWAMP;

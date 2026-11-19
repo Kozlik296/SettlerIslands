@@ -1,0 +1,159 @@
+# Fixed trades of the island settlements.
+#
+# Every settlement villager sleeps in a bed of its own colour; "settlements" says which trader
+# lives in which bed. A trader has a profession (only the look and the workstation) and a list
+# of trades that never change and never level up:
+#
+#   sell <ITEM> <amount> <emeralds>    the villager sells <amount> of ITEM for <emeralds>
+#   buy  <ITEM> <amount> <emeralds>    the villager buys <amount> of ITEM and pays <emeralds>
+#
+# Prices are on purpose high for selling: buying here is a shortcut, going to the island and
+# gathering it yourself is always cheaper. Changes apply to villagers spawned after a /si reload
+# (existing ones keep their trades; /si retrade re-applies the list to the villager you look at).
+# uses: how many times each trade works before the villager has to restock at its workstation.
+
+uses:
+  sell: 8
+  buy: 12
+
+settlements:
+  timberlands:
+    green: timber_woodcutter
+    brown: timber_fletcher
+    red: timber_orchard
+  sandbanks:
+    yellow: sand_glassmaker
+    orange: sand_potter
+    light_blue: sand_fisher
+  ironstone:
+    gray: iron_toolsmith
+    black: iron_railwright
+    brown: iron_quartermaster
+  highlands:
+    white: high_shepherd
+    blue: high_prospector
+  nether:
+    red: nether_alchemist
+
+traders:
+  # ---------------------------------------------------------------- Timberlands (wood)
+  timber_woodcutter:
+    profession: toolsmith
+    trades:
+      - sell OAK_LOG 16 4
+      - sell SPRUCE_LOG 16 4
+      - sell BIRCH_LOG 16 4
+      - sell DARK_OAK_LOG 12 4
+      - sell OAK_SAPLING 4 2
+      - sell SPRUCE_SAPLING 4 2
+      - buy IRON_INGOT 4 1
+      - buy COAL 16 1
+  timber_fletcher:
+    profession: fletcher
+    trades:
+      - sell BOW 1 5
+      - sell ARROW 16 3
+      - sell STICK 32 1
+      - buy STRING 16 1
+      - buy FEATHER 16 1
+      - buy FLINT 12 1
+  timber_orchard:
+    profession: farmer
+    trades:
+      - sell APPLE 6 3
+      - sell HONEY_BOTTLE 3 3
+      - sell HONEYCOMB 3 3
+      - buy BREAD 12 1
+      - buy COOKED_BEEF 8 1
+      - buy BAKED_POTATO 12 1
+
+  # ---------------------------------------------------------------- Sandbanks (sand, glass, clay)
+  sand_glassmaker:
+    profession: mason
+    trades:
+      - sell SAND 16 3
+      - sell RED_SAND 16 3
+      - sell GLASS 8 4
+      - sell GLASS_PANE 16 4
+      - buy COAL 16 1
+      - buy OAK_LOG 24 1
+  sand_potter:
+    profession: leatherworker
+    trades:
+      - sell TERRACOTTA 8 4
+      - sell CLAY 4 3
+      - sell CLAY_BALL 12 3
+      - sell BRICK 16 4
+      - buy IRON_INGOT 4 1
+      - buy SPRUCE_LOG 24 1
+  sand_fisher:
+    profession: fisherman
+    trades:
+      - sell COOKED_COD 6 2
+      - sell COOKED_SALMON 4 2
+      - sell DRIED_KELP_BLOCK 4 2
+      - buy COAL 16 1
+      - buy STRING 20 1
+
+  # ---------------------------------------------------------------- Ironstone (iron, mining)
+  iron_toolsmith:
+    profession: toolsmith
+    trades:
+      - sell IRON_PICKAXE 1 9
+      - sell IRON_SHOVEL 1 4
+      - sell IRON_AXE 1 8
+      - buy BREAD 12 1
+      - buy COOKED_PORKCHOP 8 1
+      - buy COOKED_BEEF 8 1
+  iron_railwright:
+    profession: armorer
+    trades:
+      - sell RAIL 8 6
+      - sell BUCKET 1 5
+      - sell MINECART 1 7
+      - buy OAK_LOG 24 1
+      - buy SPRUCE_LOG 24 1
+      - buy BIRCH_LOG 24 1
+  iron_quartermaster:
+    profession: butcher
+    trades:
+      - sell TORCH 16 2
+      - sell LANTERN 2 3
+      - buy WHITE_WOOL 20 1
+      - buy COOKED_MUTTON 8 1
+      - buy BAKED_POTATO 12 1
+
+  # ---------------------------------------------------------------- Highlands (wool, copper, lapis)
+  high_shepherd:
+    profession: shepherd
+    trades:
+      - sell WHITE_WOOL 16 3
+      - sell LIGHT_BLUE_WOOL 8 2
+      - sell RED_WOOL 8 2
+      - sell SHEARS 1 3
+      - buy BREAD 12 1
+      - buy COAL 16 1
+  high_prospector:
+    profession: cleric
+    trades:
+      - sell COPPER_INGOT 8 3
+      - sell LAPIS_LAZULI 8 4
+      - buy IRON_PICKAXE 1 3
+      - buy IRON_SHOVEL 1 1
+      - buy COAL 16 1
+      - buy COOKED_BEEF 8 1
+
+  # ---------------------------------------------------------------- Nether outpost
+  nether_alchemist:
+    profession: cleric
+    trades:
+      - sell NETHER_WART 8 4
+      - sell GLOWSTONE_DUST 16 4
+      - sell QUARTZ 16 4
+      - sell BLAZE_POWDER 4 6
+      - sell MAGMA_CREAM 2 4
+      - sell GOLDEN_APPLE 1 9
+      - buy OAK_LOG 24 1
+      - buy BREAD 12 1
+      - buy GOLD_INGOT 4 1
+      - buy WATER_BUCKET 1 2

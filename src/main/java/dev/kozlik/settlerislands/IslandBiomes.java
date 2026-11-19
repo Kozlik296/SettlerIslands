@@ -13,7 +13,7 @@ public final class IslandBiomes extends BiomeProvider {
             Biome.PLAINS, Biome.SUNFLOWER_PLAINS, Biome.MEADOW, Biome.FLOWER_FOREST, Biome.BEACH,
             Biome.STONY_PEAKS, Biome.WINDSWEPT_GRAVELLY_HILLS, Biome.STONY_SHORE, Biome.DRIPSTONE_CAVES,
             Biome.DARK_FOREST, Biome.PALE_GARDEN,
-            Biome.DESERT, Biome.BADLANDS,
+            Biome.DESERT, Biome.BADLANDS, Biome.WOODED_BADLANDS,
             Biome.OLD_GROWTH_SPRUCE_TAIGA, Biome.BIRCH_FOREST, Biome.FOREST, Biome.JUNGLE, Biome.CHERRY_GROVE, Biome.MANGROVE_SWAMP,
             Biome.FROZEN_PEAKS, Biome.SNOWY_SLOPES, Biome.GROVE, Biome.SNOWY_TAIGA,
             Biome.BASALT_DELTAS, Biome.SOUL_SAND_VALLEY, Biome.NETHER_WASTES, Biome.CRIMSON_FOREST, Biome.WARPED_FOREST,

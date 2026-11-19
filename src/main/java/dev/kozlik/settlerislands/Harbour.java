@@ -2,6 +2,7 @@ package dev.kozlik.settlerislands;
 
 import org.bukkit.Material;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Villager;
 
 import java.util.List;
 import java.util.Map;
@@ -9,7 +10,10 @@ import java.util.Map;
 /**
  * The main harbour in Meadow's bay: a stone quay wall with a paved promenade, five railed
  * piers on posts with lanterns and wider ends, two harbour buildings behind the promenade,
- * cargo stacks, and boats moored at the piers.
+ * cargo stacks, and boats moored at the piers. In the middle of the promenade, where the village
+ * road arrives, is the harbour market (stalls and a bell; its fisherman and cartographer sleep in
+ * the harbour buildings). A wooden crane, fishing huts and drying racks on the outer piers and tall
+ * lamps along the promenade finish it.
  */
 public final class Harbour {
 
@@ -30,6 +34,17 @@ public final class Harbour {
         if (Math.abs(dx) > Math.abs(dz)) return dx > 0 ? "east" : "west";
         return dz > 0 ? "south" : "north";
     }
+
+    /** Where the village road meets the promenade. */
+    public int[] spot() {
+        return new int[]{x(-8, 0), z(-8, 0)};
+    }
+
+    /** World direction of +t (out to sea) and +s (along the quay), snapped to axes. */
+    private int tx() { return (int) Math.round(c.dx()); }
+    private int tz() { return (int) Math.round(c.dz()); }
+    private int sx() { return (int) Math.round(-c.dz()); }
+    private int sz() { return (int) Math.round(c.dx()); }
 
     private int x(double t, double s) {
         return c.px(t, s);
@@ -84,18 +99,103 @@ public final class Harbour {
             b.set(x, QUAY + 1, z, Builder.hash(x, 0, z) < 600 ? Material.BARREL : Material.HAY_BLOCK);
             if (Builder.hash(x, 9, z) < 400) b.set(x, QUAY + 2, z, Material.BARREL);
         }
+        market(b);
+        crane(b, -16);
+        for (int p : new int[]{-24, 24}) fishingHut(b, p);
+        // tall lamps along the back of the promenade
+        for (int s = -30; s <= 30; s += 10) {
+            if (Math.abs(s) < 5) continue;
+            int x = x(-11, s), z = z(-11, s);
+            for (int k = 1; k <= 3; k++) b.set(x, QUAY + k, z, Material.STONE_BRICK_WALL);
+            b.set(x, QUAY + 4, z, Material.LANTERN);
+        }
         // harbour buildings behind the promenade, facing the water
         int rot = Template.rotationFacing(c.dx(), c.dz());
         Template tp = Template.get("house_big");
         for (int side : new int[]{-17, 17}) {
-            int[] off = tp.offset(tp.w / 2, 10, rot);
-            int fx = x(-14, side), fz = z(-14, side);
-            int ox = fx - off[0], oz = fz - off[1];
+            int[] o = buildingOrigin(tp, side);
+            int ox = o[0], oz = o[1];
+            b.clearTrees(ox - 4, oz - 4, ox + tp.sizeX(rot) + 4, oz + tp.sizeZ(rot) + 4);
             b.level(ox, oz, ox + tp.sizeX(rot) - 1, oz + tp.sizeZ(rot) - 1, QUAY, Material.STONE_BRICKS, 20);
             Map<String, String> vars = Map.of("roof", side < 0 ? "deepslate_tile" : "dark_oak", "log", "spruce_log",
                     "slog", "stripped_spruce_log", "plank", "spruce_planks", "wall", side < 0 ? "white_terracotta" : "calcite",
                     "station", side < 0 ? "barrel" : "cartography_table");
             tp.place(b, ox, QUAY, oz, rot, vars, true);
+        }
+    }
+
+    private int[] buildingOrigin(Template tp, int side) {
+        int rot = Template.rotationFacing(c.dx(), c.dz());
+        int[] off = tp.offset(tp.w / 2, 10, rot);
+        return new int[]{x(-14, side) - off[0], z(-14, side) - off[1]};
+    }
+
+    /** Four stalls on both sides of the walkway where the village road comes in, and a bell. */
+    private void market(Builder b) {
+        String[] wools = {"blue_wool", "yellow_wool", "red_wool", "green_wool"};
+        int i = 0;
+        for (int t : new int[]{-9, -4}) {
+            for (int side : new int[]{-1, 1}) {
+                int x = x(t, side * 5), z = z(t, side * 5);
+                // the stall faces the walkway (towards s = 0)
+                Village.stall(b, x, QUAY, z, -side * sx(), -side * sz(), wools[i % wools.length], Builder.hash(x, 5, z) + i);
+                i++;
+            }
+        }
+        // bell post at the quay edge, the market's meeting point
+        int bx = x(-1, 0), bz = z(-1, 0);
+        for (int side : new int[]{-1, 1}) {
+            for (int k = 1; k <= 3; k++) b.set(x(-1, side), QUAY + k, z(-1, side), Material.SPRUCE_FENCE);
+            b.set(x(-1, side), QUAY + 4, z(-1, side), "minecraft:spruce_slab[type=bottom]");
+        }
+        b.set(bx, QUAY + 4, bz, "minecraft:spruce_slab[type=bottom]");
+        b.set(bx, QUAY + 3, bz, "minecraft:bell[attachment=ceiling,facing=" + facingName(sx(), sz()) + "]");
+    }
+
+    /** A wooden crane on the quay edge: post, boom out over the water, chain with a crate. */
+    private void crane(Builder b, int s) {
+        for (int k = 1; k <= 9; k++) b.set(x(1, s), QUAY + k, z(1, s), Material.SPRUCE_LOG);
+        String axis = tx() != 0 ? "x" : "z";
+        for (int t = -1; t <= 6; t++) b.set(x(t, s), QUAY + 10, z(t, s), "minecraft:spruce_log[axis=" + axis + "]");
+        b.set(x(-1, s), QUAY + 9, z(-1, s), Material.COBBLESTONE);                     // counterweight
+        b.set(x(-1, s), QUAY + 8, z(-1, s), Material.COBBLESTONE);
+        b.set(x(2, s), QUAY + 9, z(2, s), Material.SPRUCE_FENCE);                      // brace
+        b.set(x(3, s), QUAY + 9, z(3, s), "minecraft:spruce_trapdoor[half=top,facing=" + facingName(tx(), tz()) + "]");
+        for (int y = QUAY + 9; y >= QUAY + 5; y--) b.set(x(6, s), y, z(6, s), "minecraft:iron_chain[axis=y]");
+        b.set(x(6, s), QUAY + 4, z(6, s), Material.BARREL);
+        b.set(x(0, s), QUAY + 1, z(0, s), Material.BARREL);
+        b.set(x(0, s + 1), QUAY + 1, z(0, s + 1), Material.BARREL);
+        b.set(x(-1, s + 1), QUAY + 1, z(-1, s + 1), Material.HAY_BLOCK);
+        b.set(x(0, s), QUAY + 2, z(0, s), Material.BARREL);
+    }
+
+    /** A little fishing hut and a drying rack on the head of an outer pier. */
+    private void fishingHut(Builder b, int p) {
+        int y = Pier.DECK;
+        int out = p < 0 ? -1 : 1;                          // the side of the head away from the middle
+        int s1 = p + out, s2 = p + out * 3;
+        for (int t = 26; t <= 29; t++) {
+            for (int s = Math.min(s1, s2); s <= Math.max(s1, s2); s++) {
+                boolean edge = t == 26 || t == 29 || s == s1 || s == s2;
+                boolean corner = (t == 26 || t == 29) && (s == s1 || s == s2);
+                for (int k = 1; k <= 2; k++) {
+                    if (corner) b.set(x(t, s), y + k, z(t, s), Material.SPRUCE_LOG);
+                    else if (edge && s != s1) b.set(x(t, s), y + k, z(t, s), k == 2 && t != 26 && t != 29 ? "minecraft:glass_pane" : "minecraft:spruce_planks");
+                    else if (edge) b.set(x(t, s), y + k, z(t, s), Material.AIR);      // open towards the pier
+                }
+                b.set(x(t, s), y + 3, z(t, s), "minecraft:spruce_slab[type=bottom]");
+            }
+        }
+        int ms = p + out * 2;
+        b.set(x(27, ms), y + 1, z(27, ms), Material.BARREL);
+        b.set(x(28, ms), y + 1, z(28, ms), "minecraft:chest[facing=" + facingName(-out * sx(), -out * sz()) + "]");
+        b.set(x(27, ms), y + 2, z(27, ms), "minecraft:lantern[hanging=false]");
+        // drying rack on the other side of the head
+        int rs = p - out * 3;
+        for (int t : new int[]{26, 29}) for (int k = 1; k <= 3; k++) b.set(x(t, rs), y + k, z(t, rs), Material.SPRUCE_FENCE);
+        for (int t = 27; t <= 28; t++) {
+            b.set(x(t, rs), y + 3, z(t, rs), Material.SPRUCE_FENCE);
+            b.set(x(t, rs), y + 2, z(t, rs), Material.DRIED_KELP_BLOCK);
         }
     }
 
@@ -139,12 +239,22 @@ public final class Harbour {
     }
 
     public void collectTasks(List<StructurePlan.Task> tasks) {
+        // the market traders live in the harbour buildings
+        int rot = Template.rotationFacing(c.dx(), c.dz());
+        Template tp = Template.get("house_big");
+        for (int side : new int[]{-17, 17}) {
+            int[] o = buildingOrigin(tp, side);
+            int[] off = tp.offset(6, 8, rot);
+            Villager.Profession prof = side < 0 ? Villager.Profession.FISHERMAN : Villager.Profession.CARTOGRAPHER;
+            tasks.add(new StructurePlan.SpawnVillager(o[0] + off[0], QUAY + 1, o[1] + off[1], prof, false, null));
+            tasks.add(new StructurePlan.SpawnVillager(o[0] + off[0], QUAY + 1, o[1] + off[1], Villager.Profession.NONE, false, null));
+        }
         EntityType[] boats = {EntityType.OAK_BOAT, EntityType.SPRUCE_BOAT, EntityType.OAK_CHEST_BOAT, EntityType.BIRCH_BOAT};
         int i = 0;
         for (int p : PIERS) {
             for (int t : new int[]{14, 23}) {
                 int side = (i % 2 == 0) ? 4 : -4;   // just outside the rail opening
-                tasks.add(new StructurePlan.SpawnBoat(x(t, p + side), Pier.DECK, z(t, p + side), boats[i % boats.length]));
+                tasks.add(new StructurePlan.SpawnEntity(x(t, p + side), Pier.DECK, z(t, p + side), boats[i % boats.length]));
                 i++;
             }
         }

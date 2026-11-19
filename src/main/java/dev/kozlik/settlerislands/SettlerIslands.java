@@ -34,9 +34,12 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
     }
 
     @Override
+    private SetupListener setup;
+
     public void onEnable() {
         getServer().getPluginManager().registerEvents(this, this);
-        getServer().getPluginManager().registerEvents(new SetupListener(this), this);
+        setup = new SetupListener(this);
+        getServer().getPluginManager().registerEvents(setup, this);
         for (World w : Bukkit.getWorlds()) setupWorld(w);
         NetherAtmosphere atmosphere = new NetherAtmosphere();
         getServer().getScheduler().runTaskTimer(this, atmosphere, 20L, 10L);
@@ -45,6 +48,7 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
 
     private void loadSettings() {
         reloadConfig();
+        Trades.load(this);
         borderSize = getConfig().getInt("border-size", 6000);
         glowstonePerChunk = getConfig().getDouble("nether-glowstone-per-chunk", 0.35);
         ores.clear();
@@ -110,7 +114,9 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
         if (args.length == 0) {
             sender.sendMessage("/si create <name> - make a new island world and go there");
             sender.sendMessage("/si tp <island|zone> - go to an island (meadow, ironstone, islet3, nether...)");
-            sender.sendMessage("/si tp village|fortress - go to a structure");
+            sender.sendMessage("/si tp village|fortress|harbour - go to a structure");
+            sender.sendMessage("/si tp settlement <timberlands|sandbanks|ironstone|highlands|nether> - go to a settlement");
+            sender.sendMessage("/si retrade - give the settlement villager you look at its trades from trades.yml again");
             sender.sendMessage("/si where - show the zone and biome you stand in");
             sender.sendMessage("/si stats - land per zone and planned ore totals");
             return true;
@@ -143,13 +149,35 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
                     sender.sendMessage(sb.toString());
                     return true;
                 }
-                if (args[1].equalsIgnoreCase("village") || args[1].equalsIgnoreCase("fortress")) {
-                    StructurePlan plan = StructurePlan.get(WorldModel.get(p.getWorld().getSeed()), p.getWorld().getSeed());
-                    Location to = args[1].equalsIgnoreCase("village")
-                            ? new Location(p.getWorld(), plan.village.cx + 0.5, plan.village.plazaY + 1, plan.village.cz + 3.5)
-                            : new Location(p.getWorld(), plan.fortress.fx + 0.5, Fortress.DECK + 1, plan.fortress.fz - 40 + 0.5);
-                    p.teleport(to);
-                    return true;
+                StructurePlan plan = StructurePlan.get(WorldModel.get(p.getWorld().getSeed()), p.getWorld().getSeed());
+                switch (args[1].toLowerCase(Locale.ROOT)) {
+                    case "village" -> {
+                        p.teleport(new Location(p.getWorld(), plan.village.cx + 6.5, plan.village.plazaY + 1, plan.village.cz + 6.5));
+                        return true;
+                    }
+                    case "fortress" -> {
+                        p.teleport(new Location(p.getWorld(), plan.fortress.fx + 0.5, Fortress.DECK + 1, plan.fortress.fz - 40 + 0.5));
+                        return true;
+                    }
+                    case "harbour", "harbor" -> {
+                        int[] h = plan.harbour.spot();
+                        p.teleport(new Location(p.getWorld(), h[0] + 0.5, Harbour.QUAY + 1, h[1] + 0.5));
+                        return true;
+                    }
+                    case "settlement" -> {
+                        String zone = args.length > 2 ? args[2].toLowerCase(Locale.ROOT) : "";
+                        for (Settlement st : plan.settlements) {
+                            if (st.zone.equals(zone)) {
+                                int[] h = st.spot();
+                                p.teleport(new Location(p.getWorld(), h[0] + 0.5, h[1] + 1, h[2] + 0.5));
+                                return true;
+                            }
+                        }
+                        sender.sendMessage("Settlements: timberlands sandbanks ironstone highlands nether");
+                        return true;
+                    }
+                    default -> {
+                    }
                 }
                 Layout.Island isl = Layout.get().find(args[1]);
                 if (isl == null) {
@@ -192,6 +220,19 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
                     }
                     sender.sendMessage(sb.toString());
                 }
+            }
+            case "retrade" -> {
+                if (!(sender instanceof Player p)) return true;
+                if (p.getTargetEntity(8) instanceof org.bukkit.entity.Villager v) {
+                    String id = v.getPersistentDataContainer().get(setup.tradesKey, org.bukkit.persistence.PersistentDataType.STRING);
+                    Trades.Trader t = id != null ? Trades.get(id) : null;
+                    if (t == null) {
+                        sender.sendMessage("That villager is not a settlement trader.");
+                        return true;
+                    }
+                    setup.applyTrades(v, t);
+                    sender.sendMessage("Trades of " + id + " re-applied.");
+                } else sender.sendMessage("Look at a villager.");
             }
             case "reload" -> {
                 loadSettings();
