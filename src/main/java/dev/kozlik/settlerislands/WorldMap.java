@@ -228,6 +228,11 @@ public final class WorldMap implements Listener {
                 String name = Character.toUpperCase(st.zone.charAt(0)) + st.zone.substring(1);
                 marker(cursors, s[0], s[2], MapCursor.Type.BANNER_YELLOW, name);
             }
+            if (plugin.ships() != null) {
+                for (var e : plugin.ships().markers(world)) {
+                    marker(cursors, (int) e.getKey()[0], (int) e.getKey()[1], MapCursor.Type.BANNER_WHITE, e.getValue());
+                }
+            }
             for (Player p : world.getPlayers()) {
                 float yaw = p.getLocation().getYaw();
                 byte dir = (byte) (((int) Math.floor(yaw * 16 / 360.0 + 0.5)) & 15);

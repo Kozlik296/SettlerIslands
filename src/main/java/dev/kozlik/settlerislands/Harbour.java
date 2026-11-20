@@ -235,7 +235,10 @@ public final class Harbour {
                 }
             }
         }
-        for (int s = p - 4; s <= p + 4; s++) b.set(x(PIER_LEN, s), Pier.DECK + 1, z(PIER_LEN, s), Material.SPRUCE_FENCE);
+        // the end of the pier is open (only the corners have rails) so ships can come alongside
+        for (int s = p - 4; s <= p + 4; s++) {
+            if (Math.abs(s - p) >= 3) b.set(x(PIER_LEN, s), Pier.DECK + 1, z(PIER_LEN, s), Material.SPRUCE_FENCE);
+        }
     }
 
     public void collectTasks(List<StructurePlan.Task> tasks) {

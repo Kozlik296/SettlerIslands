@@ -89,9 +89,9 @@ public final class Guide implements Listener, CommandExecutor {
                 "Alchemist.\nSells nether wart, glowstone, quartz, blaze powder, magma cream, golden apples.\n"
                         + "Buys logs, bread, gold, water buckets."));
         pages.add(page("Ships",
-                "Craft a Sloop:\n  3 white wool\n  log, chest, log\n  3 boats\n\nRight-click open water to launch it. "
-                        + "Walk on deck, use its 3 chests.\nRight-click the helm sign to sail, look where you want to go, "
-                        + "right-click again to stop."));
+                "Craft a Sloop:\n  3 white wool\n  log, chest, log\n  3 boats\n\nRight-click the water (also from a pier) to launch it. "
+                        + "Walk on deck, use its 3 chests.\nRight-click the helm to take the wheel: W sail, S stop, "
+                        + "A/D turn, sneak to leave."));
         pages.add(page("Ships (2)",
                 "Everyone on deck moves with the ship.\n\nSneak + right-click the helm to pack it back into an item "
                         + "(chests must be empty first).\n\nNo building on ships."));

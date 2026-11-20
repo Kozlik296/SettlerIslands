@@ -34,7 +34,9 @@ public final class SpawnRules implements Listener {
         if ((reason == CreatureSpawnEvent.SpawnReason.NATURAL || reason == CreatureSpawnEvent.SpawnReason.PATROL
                 || reason == CreatureSpawnEvent.SpawnReason.REINFORCEMENTS) && event.getEntity() instanceof Enemy) {
             long seed = loc.getWorld().getSeed();
-            if (WorldModel.get(seed).sample(loc.getBlockX(), loc.getBlockZ()).zone() == Zone.MEADOW) {
+            WorldModel.Sample sm = WorldModel.get(seed).sample(loc.getBlockX(), loc.getBlockZ());
+            // Meadow and a 48-block band around its coast (beaches, shallows) stay free of monsters
+            if (sm.zone() == Zone.MEADOW || (sm.nearZone() == Zone.MEADOW && sm.s() > -48)) {
                 event.setCancelled(true);
                 return;
             }

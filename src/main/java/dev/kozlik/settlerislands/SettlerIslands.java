@@ -38,6 +38,10 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
     private Guide guide;
     private Ships ships;
 
+    public Ships ships() {
+        return ships;
+    }
+
     public Guide guide() {
         return guide;
     }
@@ -45,7 +49,7 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
     @Override
     public void onDisable() {
         if (economy != null) economy.save();
-        if (ships != null) ships.saveNow();
+        if (ships != null) ships.shutdown();
     }
 
 
