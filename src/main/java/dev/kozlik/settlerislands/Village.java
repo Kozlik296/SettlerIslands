@@ -1,6 +1,7 @@
 package dev.kozlik.settlerislands;
 
 import org.bukkit.Material;
+import org.bukkit.Tag;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Villager;
 
@@ -817,18 +818,28 @@ public final class Village {
                 (x, z) -> roadCells.containsKey(key(x, z)) || (protectedCells.contains(key(x, z))
                         && !(x >= lot.ox - 3 && x <= lot.ox + lot.sx + 2 && z >= lot.oz - 3 && z <= lot.oz + lot.sz + 2)));
         tp.place(b, lot.ox, lot.floorY, lot.oz, lot.rot, lot.vars, true);
-        // path from the door to the road (planned round other buildings)
+        // path from the door to the road (planned round other buildings). It starts right at the door
+        // (also over the house's own front yard) and eases from the floor height down or up to the
+        // ground, one block per step, so there is no grass block or wall in between.
         List<Long> path = lot.path;
+        int outside = 0;
         for (long kk : path) {
             int x = (int) (kk >> 32), z = (int) kk;
             if (roadCells.containsKey(kk)) break;
-            if (!b.in(x, z)) continue;
             boolean inLot = x >= lot.ox && z >= lot.oz && x < lot.ox + lot.sx && z < lot.oz + lot.sz;
-            int g = inLot ? lot.floorY : b.ground(x, z);
+            if (!inLot) outside++;
+            if (!b.in(x, z)) continue;
+            int g = b.ground(x, z);
             if (g < Pier.DECK) break;
-            if (inLot) continue;
-            b.set(x, g, z, Material.DIRT_PATH);
-            b.clear(x, z, g + 1, g + 3);
+            int y = inLot ? lot.floorY : Math.max(Math.min(g, lot.floorY + outside), lot.floorY - outside);   // at most 1 up or down per step
+            if (inLot) {
+                Material here = b.get(x, y, z);
+                if (here != Material.GRASS_BLOCK && here != Material.DIRT && here != Material.COARSE_DIRT && here != Material.PODZOL) continue;
+                if (!b.get(x, y + 1, z).isAir() && !Tag.REPLACEABLE.isTagged(b.get(x, y + 1, z))) continue;
+            }
+            for (int yy = g + 1; yy < y; yy++) b.set(x, yy, z, Material.DIRT);
+            b.set(x, y, z, Material.DIRT_PATH);
+            if (!inLot) b.clear(x, z, y + 1, y + 3);       // (inside the lot: keep the porch roof)
         }
         int x1 = lot.ox - 3, z1 = lot.oz - 3, x2 = lot.ox + lot.sx + 2, z2 = lot.oz + lot.sz + 2;
         for (int x = x1; x <= x2; x++) {
