@@ -238,6 +238,7 @@ public final class Builder {
                             if (trunk(region.getType(x, y, z)) && visited.add(pk(x, y, z))) q.add(new int[]{x, y, z});
                         }
             }
+            if (!tree) tree = bareTrunk(group);
             if (!tree) continue;
             for (int[] p : group) region.setType(p[0], p[1], p[2], Material.AIR);
             removed.addAll(group);
@@ -255,6 +256,29 @@ public final class Builder {
                         if (region.isInRegion(x, y, z) && naturalCrown(x, y, z)) region.setType(x, y, z, Material.AIR);
                     }
         }
+    }
+
+    /**
+     * A trunk whose leaves are already gone still counts as a tree: an upright log column (3 or
+     * more, axis y) standing on soil. Building logs stand on stone or planks, log piles lie flat.
+     */
+    private boolean bareTrunk(java.util.List<int[]> group) {
+        for (int[] p : group) {
+            Material below = region.isInRegion(p[0], p[1] - 1, p[2]) ? region.getType(p[0], p[1] - 1, p[2]) : Material.STONE;
+            boolean soil = below == Material.GRASS_BLOCK || below == Material.DIRT || below == Material.PODZOL
+                    || below == Material.COARSE_DIRT || below == Material.ROOTED_DIRT || below == Material.MUD
+                    || below == Material.MOSS_BLOCK || below == Material.PALE_MOSS_BLOCK || below == Material.CRIMSON_NYLIUM
+                    || below == Material.WARPED_NYLIUM || below == Material.NETHERRACK || below == Material.SOUL_SOIL;
+            if (!soil) continue;
+            int up = 0;
+            for (int y = p[1]; up < 3 && region.isInRegion(p[0], y, p[2]); y++, up++) {
+                BlockData bd = region.getBlockData(p[0], y, p[2]);
+                if (!trunk(bd.getMaterial())) break;
+                if (bd instanceof org.bukkit.block.data.Orientable o && o.getAxis() != org.bukkit.Axis.Y) break;
+            }
+            if (up >= 3) return true;
+        }
+        return false;
     }
 
     private static long pk(int x, int y, int z) {
@@ -357,6 +381,13 @@ public final class Builder {
     /** Clears from y1 to y2 (air), only in this chunk. */
     public void clear(int x, int z, int y1, int y2) {
         if (!in(x, z)) return;
+        // clearing through a tree trunk would leave the rest of the tree floating: take the whole tree
+        for (int y = y1; y <= y2; y++) {
+            if (y > minY && y < maxY && trunk(region.getType(x, y, z))) {
+                clearTrees(x, z, x, z);
+                break;
+            }
+        }
         for (int y = y1; y <= y2; y++) set(x, y, z, Material.AIR);
     }
 
