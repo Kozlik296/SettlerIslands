@@ -255,11 +255,22 @@ public final class Builder {
      * 'falloff' blocks, so a yard sits in the landscape instead of on a cube of dirt.
      */
     public void terraform(int x1, int z1, int x2, int z2, int y, Material coreTop, int falloff, int clearUp) {
+        terraform(x1, z1, x2, z2, y, coreTop, falloff, clearUp, (a, b) -> false);
+    }
+
+    /**
+     * Levels the box to y and blends the ground around it back to the natural height over 'falloff'
+     * blocks. Cells where skip(x, z) is true (roads, other buildings) are left alone, and in the
+     * blend band only the ground itself is shaped (nothing high above it is cleared).
+     */
+    public void terraform(int x1, int z1, int x2, int z2, int y, Material coreTop, int falloff, int clearUp,
+                          java.util.function.BiPredicate<Integer, Integer> skip) {
         for (int x = Math.max(x1 - falloff, minX); x <= Math.min(x2 + falloff, minX + 15); x++) {
             for (int z = Math.max(z1 - falloff, minZ); z <= Math.min(z2 + falloff, minZ + 15); z++) {
                 double ox = Math.max(0, Math.max(x1 - x, x - x2)), oz = Math.max(0, Math.max(z1 - z, z - z2));
                 double d = Math.hypot(ox, oz);
                 if (d >= falloff) continue;
+                if (d > 0 && skip.test(x, z)) continue;
                 WorldModel.Sample sm = model.sample(x, z);
                 int natural = model.height(x, z, sm);
                 if (d > 0 && natural < WorldModel.WATER_TOP) continue;
@@ -272,7 +283,7 @@ public final class Builder {
                         ? Material.NETHERRACK : Material.DIRT;
                 for (int yy = Math.min(natural, target - 1) + 1; yy < target; yy++) set(x, yy, z, fill);
                 set(x, target, z, top);
-                clear(x, z, target + 1, Math.max(natural, target) + clearUp);
+                clear(x, z, target + 1, Math.max(natural, target) + (d == 0 ? clearUp : 3));
             }
         }
     }

@@ -24,8 +24,10 @@ public final class Village {
 
     private static final int RADIUS = 175;         // nothing is built further from the square
     private static final int SQUARE = 17;          // radius of the square
-    private static final int CORE_T = 136;         // the town grid reaches this far down the avenue
-    private static final int CORE_S = 64;          // and this far to each side
+    private static final int CORE_T = 130;         // the back streets reach this far down the avenue
+    private static final int BACK_S = 34;          // and run this far to each side of it
+    private static final int AVENUE_HOUSES = 14, RING_HOUSES = 12, OUTER_HOUSES = 12;
+    private int avenueHouses, ringHouses, outerHouses;
 
     /** A kind of building: template, door column, front row (porch), inside spawn row, villagers. */
     private record Kind(String template, int doorCol, int front, int inside, int villagers) {
@@ -80,6 +82,7 @@ public final class Village {
     private final List<int[]> lamps = new ArrayList<>();
     private final List<Feature> features = new ArrayList<>();
     private final List<int[]> bushes = new ArrayList<>();
+    private final Set<Long> protectedCells = new HashSet<>();
     private int ax = 1, az = 0;
     private final int harbourX, harbourZ;
 
@@ -120,43 +123,32 @@ public final class Village {
             for (int sd : new int[]{-1, 1}) bushes.add(new int[]{lx(t, sd * 4), lz(t, sd * 4)});
         }
 
-        // --- the town centre: a grid of streets on both sides of the avenue (dense, houses close together)
+        // --- two back streets parallel to the avenue, joined to it by cross streets (the ring around the centre)
         List<List<double[]>> streets = new ArrayList<>();
-        for (int sv : new int[]{-CORE_S, -CORE_S / 2, CORE_S / 2, CORE_S}) streets.add(line(m, 0, sv, CORE_T, sv));
-        for (int tv = 0; tv <= CORE_T; tv += CORE_T / 4) {
-            int s0 = tv == 0 ? SQUARE + 3 : 4;
-            streets.add(line(m, tv, s0, tv, CORE_S));
-            streets.add(line(m, tv, -s0, tv, -CORE_S));
+        for (int sv : new int[]{-BACK_S, BACK_S}) streets.add(line(m, 4, sv, CORE_T, sv));
+        for (int tv : new int[]{40, 88}) {
+            streets.add(line(m, tv, 4, tv, BACK_S - 2));
+            streets.add(line(m, tv, -4, tv, -BACK_S + 2));
         }
+        streets.add(line(m, 4, SQUARE + 2, 4, BACK_S - 2));
+        streets.add(line(m, 4, -SQUARE - 2, 4, -BACK_S + 2));
         streets.removeIf(List::isEmpty);
         for (List<double[]> st : streets) rasterize(st, 1);
 
-        // --- the outer village: winding roads out of the grid's corners and sides, lanes off them
+        // --- the outer village: winding roads out from the ends of the back streets
         List<List<double[]>> mains = new ArrayList<>();
-        double[][] starts = {{CORE_T + 3, CORE_S, 1, 1}, {CORE_T + 3, -CORE_S, 1, -1}, {CORE_T / 2, CORE_S + 3, 0, 1},
-                {CORE_T / 2, -CORE_S - 3, 0, -1}, {0, CORE_S + 3, -0.4, 1}, {0, -CORE_S - 3, -0.4, -1},
-                {-34, SQUARE + 6, -1, 0.7}, {-34, -SQUARE - 6, -1, -0.7}, {CORE_T + 3, 20, 1, 0.3}, {CORE_T + 3, -20, 1, -0.3}};
+        double[][] starts = {{CORE_T + 2, BACK_S, 1, 0.8}, {CORE_T + 2, -BACK_S, 1, -0.8}, {64, BACK_S + 2, 0.2, 1},
+                {64, -BACK_S - 2, 0.2, -1}, {4, BACK_S + 2, -0.6, 1}, {4, -BACK_S - 2, -0.6, -1}};
         for (double[] st : starts) {
             double wx = lxd(st[0], st[1]), wz = lzd(st[0], st[1]);
             double dx = ax * st[2] + (-az) * st[3], dz = az * st[2] + ax * st[3];
-            List<double[]> road = grow(m, rnd, wx, wz, Math.atan2(dz, dx), 40 + rnd.nextInt(40), false);
+            List<double[]> road = grow(m, rnd, wx, wz, Math.atan2(dz, dx), 45 + rnd.nextInt(35), false);
             if (road.size() < 10) continue;
             mains.add(road);
             rasterize(road, 2);
         }
         List<List<double[]>> lanes = new ArrayList<>();
-        for (List<double[]> road : mains) {
-            for (int k = 12; k < road.size() - 6; k += 14 + rnd.nextInt(8)) {
-                double[] p = road.get(k);
-                double h = p[2] + (rnd.nextBoolean() ? 1 : -1) * Math.toRadians(65 + rnd.nextInt(40));
-                List<double[]> lane = grow(m, rnd, p[0], p[1], h, 25 + rnd.nextInt(30), false);
-                if (lane.size() < 12) continue;
-                lanes.add(lane);
-                rasterize(lane, 1);
-            }
-        }
         for (List<double[]> road : mains) for (int k = 10; k < road.size(); k += 17) addLamp(road.get(k), 3.5, k);
-        for (List<double[]> lane : lanes) for (int k = 10; k < lane.size(); k += 17) addLamp(lane.get(k), 2.5, k);
         for (List<double[]> st : streets) for (int k = 8; k < st.size(); k += 14) addLamp(st.get(k), 2.5, k);
 
         // --- city hall, its front on the edge of the square, facing down the avenue
@@ -169,49 +161,14 @@ public final class Village {
 
         planSquare(hallDir);
 
-        // --- houses: first along the avenue, then the grid streets, then the outer roads
+        // --- houses: facing the avenue, then along the back streets (inside the ring), then the outer roads
         List<int[]> boxes = new ArrayList<>();
         boxes.add(new int[]{cx - SQUARE - 2, cz - SQUARE - 2, cx + SQUARE + 2, cz + SQUARE + 2});
         boxes.add(new int[]{hallOx - 2, hallOz - 2, hallOx + hall.sizeX(hallRot) + 1, hallOz + hall.sizeZ(hallRot) + 1});
         int[] counters = new int[3];   // deck, general station, smith station
-        placeAlong(m, rnd, boxes, counters, avenue, 6, true);
-        for (List<double[]> st : streets) placeAlong(m, rnd, boxes, counters, st, 4, true);
-        List<List<double[]>> outer = new ArrayList<>(mains);
-        outer.addAll(lanes);
-        for (int r = 0; r < outer.size(); r++) {
-            List<double[]> road = outer.get(r);
-            int half = r < mains.size() ? 2 : 1;
-            for (int k = 3; k < road.size(); k += 6 + rnd.nextInt(4)) {
-                double[] p = road.get(k);
-                for (int side : new int[]{-1, 1}) {
-                    double nx = -Math.sin(p[2]) * side, nz = Math.cos(p[2]) * side;   // away from the road
-                    double gap = half + 3 + rnd.nextInt(2);   // the lot (with its 1-block margin) must stay clear of the road
-                    int frontX = (int) Math.round(p[0] + nx * gap), frontZ = (int) Math.round(p[1] + nz * gap);
-                    Lot first = tryLot(m, rnd, boxes, counters, frontX, frontZ, nx, nz, false, true);
-                    if (first == null || !first.house()) continue;
-                    // a second row behind the first, reached by a path round the side
-                    int depth = first.fx != 0 ? first.sx : first.sz;
-                    int bx = (int) Math.round(frontX + nx * (depth + 4)), bz = (int) Math.round(frontZ + nz * (depth + 4));
-                    tryLot(m, rnd, boxes, counters, bx, bz, nx, nz, false, false);
-                }
-            }
-        }
-        // fill the rest of the outer ring: every free spot gets a house facing the nearest street
-        List<int[]> spots = new ArrayList<>();
-        for (int gx = -RADIUS; gx <= RADIUS; gx += 4)
-            for (int gz = -RADIUS; gz <= RADIUS; gz += 4)
-                if (gx * gx + gz * gz <= (RADIUS - 8) * (RADIUS - 8)) spots.add(new int[]{cx + gx, cz + gz});
-        spots.sort((p1, p2) -> Double.compare(Math.hypot(p1[0] - cx, p1[1] - cz), Math.hypot(p2[0] - cx, p2[1] - cz)));
-        for (int[] sp : spots) {
-            int[] road = nearestRoad(sp[0], sp[1], 18);
-            if (road == null) continue;
-            double dx = sp[0] - road[0], dz = sp[1] - road[1];
-            double nx = 0, nz = 0;                  // away from the street, on an axis
-            if (Math.abs(dx) > Math.abs(dz)) nx = Math.signum(dx);
-            else nz = Math.signum(dz);
-            if (nx == 0 && nz == 0) continue;
-            tryLot(m, rnd, boxes, counters, sp[0], sp[1], nx, nz, inCore(sp[0], sp[1]), false);
-        }
+        avenueHouses = placeAlong(m, rnd, boxes, counters, List.of(avenue), 6, AVENUE_HOUSES, false, true);
+        ringHouses = placeAlong(m, rnd, boxes, counters, streets, 4, RING_HOUSES, true, true);
+        outerHouses = placeAlong(m, rnd, boxes, counters, mains, 5, OUTER_HOUSES, true, false);
         // paths from every door to the nearest road, walking round other buildings
         Set<Long> blocked = new HashSet<>();
         for (int[] bx : boxes.subList(1, boxes.size())) {
@@ -232,9 +189,12 @@ public final class Village {
         };
         lamps.removeIf(inside);
         bushes.removeIf(inside);
+        // cells a house's ground blending must not touch: other buildings, their paths, the square and hall
+        protectedCells.addAll(onPath);
+        for (int[] bx : boxes) for (int x = bx[0]; x <= bx[2]; x++) for (int z = bx[1]; z <= bx[3]; z++) protectedCells.add(key(x, z));
         long houses = lots.stream().filter(Lot::house).count();
-        org.bukkit.Bukkit.getLogger().info("[SettlerIslands] Village planned: " + houses + " houses, "
-                + (lots.size() - houses) + " fields and pens, " + streets.size() + " town streets, " + mains.size() + " roads, " + lanes.size() + " lanes");
+        org.bukkit.Bukkit.getLogger().info("[SettlerIslands] Village planned: " + houses + " houses (" + avenueHouses + " on the avenue, "
+                + ringHouses + " inside the ring, " + outerHouses + " outside), " + (lots.size() - houses) + " fields and pens");
     }
 
     // ---- layout frame helpers (t towards the harbour, s across)
@@ -256,7 +216,7 @@ public final class Village {
 
     private boolean inCore(int x, int z) {
         int t = (x - cx) * ax + (z - cz) * az, sv = -(x - cx) * az + (z - cz) * ax;
-        return t >= -SQUARE && t <= CORE_T + 6 && Math.abs(sv) <= CORE_S + 6;
+        return t >= -SQUARE && t <= CORE_T + 6 && Math.abs(sv) <= BACK_S + 6;
     }
 
     /** A straight town street from (t0, s0) to (t1, s1), only where the ground is Meadow. */
@@ -274,17 +234,35 @@ public final class Village {
         return pts;
     }
 
-    /** Houses on both sides of a town street, as close together as they fit. */
-    private void placeAlong(WorldModel m, Random rnd, List<int[]> boxes, int[] counters, List<double[]> road, int gap, boolean core) {
-        for (double[] p : road) {
-            for (int side : new int[]{-1, 1}) {
-                double nx = -Math.sin(p[2]) * side, nz = Math.cos(p[2]) * side;
-                // snap to an axis: town streets are straight
-                if (Math.abs(nx) > Math.abs(nz)) { nx = Math.signum(nx); nz = 0; } else { nz = Math.signum(nz); nx = 0; }
-                int frontX = (int) Math.round(p[0] + nx * gap), frontZ = (int) Math.round(p[1] + nz * gap);
-                tryLot(m, rnd, boxes, counters, frontX, frontZ, nx, nz, core, false);
+    /**
+     * Up to 'cap' houses on both sides of the given streets, each facing its street. The spots are
+     * tried in order along the street (ordered) or in a shuffled order (spread out). Outside the
+     * centre some spots become fields or pens instead (not counted).
+     */
+    private int placeAlong(WorldModel m, Random rnd, List<int[]> boxes, int[] counters, List<List<double[]>> roads,
+                           int gap, int cap, boolean shuffled, boolean centre) {
+        List<double[]> spots = new ArrayList<>();
+        for (List<double[]> road : roads) {
+            for (int k = 2; k < road.size() - 2; k++) {
+                double[] p = road.get(k);
+                for (int side : new int[]{-1, 1}) spots.add(new double[]{p[0], p[1], p[2], side});
             }
         }
+        if (shuffled) java.util.Collections.shuffle(spots, rnd);
+        int placed = 0, fields = 0;
+        for (double[] p : spots) {
+            if (placed >= cap) break;
+            double nx = -Math.sin(p[2]) * p[3], nz = Math.cos(p[2]) * p[3];
+            // face the street square-on
+            if (Math.abs(nx) > Math.abs(nz)) { nx = Math.signum(nx); nz = 0; } else { nz = Math.signum(nz); nx = 0; }
+            int frontX = (int) Math.round(p[0] + nx * gap), frontZ = (int) Math.round(p[1] + nz * gap);
+            boolean field = !centre && fields < 5 && rnd.nextDouble() < 0.25;
+            Lot lot = tryLot(m, rnd, boxes, counters, frontX, frontZ, nx, nz, centre, field);
+            if (lot == null) continue;
+            if (lot.house()) placed++;
+            else fields++;
+        }
+        return placed;
     }
 
     private static Lot withPath(Lot l, List<Long> path) {
@@ -297,7 +275,7 @@ public final class Village {
         if (Math.hypot(frontX - cx, frontZ - cz) > RADIUS) return null;
         if (Math.hypot(frontX - harbourX, frontZ - harbourZ) < 45) return null;
         double roll = rnd.nextDouble();
-        String type = !centre && firstRow && roll < 0.12 ? "farm" : !centre && firstRow && roll < 0.19 ? "pen" : DECK[counters[0] % DECK.length];
+        String type = firstRow ? (roll < 0.5 ? "farm" : "pen") : DECK[counters[0] % DECK.length];
         int rot = Template.rotationFacing(-nx, -nz);
         int[] f = facingVector(rot);
         String[] style = STYLES[rnd.nextInt(STYLES.length)];
@@ -327,7 +305,7 @@ public final class Village {
         boolean yard = kind != null && !centre && rnd.nextDouble() < 0.45;
         int pad = yard ? 3 : 1;
         int[] box = {ox - pad, oz - pad, ox + sx + pad - 1, oz + sz + pad - 1};
-        int sep = centre ? -1 : 1;                 // town centre: 1-block alleys; outside: 3 blocks
+        int sep = 1;                               // at least 3 blocks between buildings
         if (overlapsRoad(new int[]{ox - 1, oz - 1, ox + sx, oz + sz}) || overlaps(boxes, box, sep) || !okLand(m, box)) return null;
         boxes.add(box);
         int mx = ox + sx / 2, mz = oz + sz / 2;
@@ -788,7 +766,9 @@ public final class Village {
     private void buildHouse(Builder b, Lot lot) {
         Kind kind = KINDS.get(lot.type);
         Template tp = Template.get(kind.template());
-        b.terraform(lot.ox, lot.oz, lot.ox + lot.sx - 1, lot.oz + lot.sz - 1, lot.floorY, Material.GRASS_BLOCK, 6, 26);
+        b.terraform(lot.ox, lot.oz, lot.ox + lot.sx - 1, lot.oz + lot.sz - 1, lot.floorY, Material.GRASS_BLOCK, 6, 26,
+                (x, z) -> roadCells.containsKey(key(x, z)) || (protectedCells.contains(key(x, z))
+                        && !(x >= lot.ox - 3 && x <= lot.ox + lot.sx + 2 && z >= lot.oz - 3 && z <= lot.oz + lot.sz + 2)));
         tp.place(b, lot.ox, lot.floorY, lot.oz, lot.rot, lot.vars, true);
         // path from the door to the road (planned round other buildings)
         List<Long> path = lot.path;
