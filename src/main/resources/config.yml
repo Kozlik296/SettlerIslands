@@ -69,6 +69,4 @@ rules:
   chest-shops: true
 
 # ------------------------------------------------------------------ ships
-ships:
-  # top speed of a sailing ship in blocks per tick (0.32 = 6.4 blocks a second, a little slower than a boat)
-  max-speed: 0.32
+# Ships sail like ordinary boats (same speed and handling); nothing to set here yet.
