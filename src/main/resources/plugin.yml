@@ -10,6 +10,9 @@ commands:
     aliases: [si]
     permission: settlerislands.admin
     usage: /si <create|tp|where|stats>
+  guide:
+    description: Get a new copy of the Settler Islands guide book
+    usage: /guide
 permissions:
   settlerislands.admin:
     default: op

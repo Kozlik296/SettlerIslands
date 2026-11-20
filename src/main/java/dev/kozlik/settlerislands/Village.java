@@ -1010,6 +1010,8 @@ public final class Village {
                 tasks.add(new StructurePlan.MapFrame(hallOx + off[0], plazaY + MAP_Y + 2 - row, hallOz + off[1], f[0], f[1], col, row));
             }
         }
+        int[] lec = hall.offset(17, 5, hallRot);         // the lectern by the map wall
+        tasks.add(new StructurePlan.GuideLectern(hallOx + lec[0], plazaY + 1, hallOz + lec[1]));
         tasks.add(new StructurePlan.SpawnVillager(cx - 6, plazaY + 1, cz + 7, Villager.Profession.NONE, false, null));
         tasks.add(new StructurePlan.SpawnVillager(cx + 7, plazaY + 1, cz - 6, Villager.Profession.NONE, false, null));
     }

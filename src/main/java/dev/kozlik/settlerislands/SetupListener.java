@@ -124,6 +124,11 @@ public final class SetupListener implements Listener {
                 });
             }
             case StructurePlan.MapFrame f -> spawnMapFrame(world, f);
+            case StructurePlan.GuideLectern g -> {
+                if (world.getBlockAt(g.x(), g.y(), g.z()).getState() instanceof org.bukkit.block.Lectern lectern) {
+                    lectern.getInventory().setItem(0, plugin.guide().book());
+                }
+            }
             case StructurePlan.SpawnEntity e -> world.spawnEntity(new Location(world, e.x() + 0.5, e.y(), e.z() + 0.5), e.type());
             case StructurePlan.SetSpawner s -> {
                 Block block = world.getBlockAt(s.x(), s.y(), s.z());

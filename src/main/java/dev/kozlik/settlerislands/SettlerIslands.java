@@ -35,6 +35,11 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
 
     private SetupListener setup;
     private Economy economy;
+    private Guide guide;
+
+    public Guide guide() {
+        return guide;
+    }
 
     @Override
     public void onDisable() {
@@ -54,6 +59,9 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
         economy = new Economy(this, setup.tradesKey);
         getServer().getPluginManager().registerEvents(economy, this);
         getServer().getPluginManager().registerEvents(new ChestShops(this), this);
+        guide = new Guide(this);
+        getServer().getPluginManager().registerEvents(guide, this);
+        if (getCommand("guide") != null) getCommand("guide").setExecutor(guide);
         for (World w : Bukkit.getWorlds()) setupWorld(w);
         NetherAtmosphere atmosphere = new NetherAtmosphere();
         getServer().getScheduler().runTaskTimer(this, atmosphere, 20L, 10L);

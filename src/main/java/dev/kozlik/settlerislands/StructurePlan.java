@@ -32,7 +32,7 @@ public final class StructurePlan {
     }
 
     /** Things that need the live world (entities, spawner types, loot) and are done when the chunk first loads. */
-    public sealed interface Task permits SpawnVillager, SetSpawner, SetLoot, SpawnEntity, MapFrame {
+    public sealed interface Task permits SpawnVillager, SetSpawner, SetLoot, SpawnEntity, MapFrame, GuideLectern {
         int x();
 
         int z();
@@ -44,6 +44,10 @@ public final class StructurePlan {
 
     /** One item frame of the world map wall: (fx, fz) is where it faces, (col, row) which part of the world it shows. */
     public record MapFrame(int x, int y, int z, int fx, int fz, int col, int row) implements Task {
+    }
+
+    /** The lectern in the city hall gets the guide book. */
+    public record GuideLectern(int x, int y, int z) implements Task {
     }
 
     /** Boats at the piers, animals in the pens. */
