@@ -123,32 +123,31 @@ public final class Village {
             for (int sd : new int[]{-1, 1}) bushes.add(new int[]{lx(t, sd * 4), lz(t, sd * 4)});
         }
 
-        // --- two back streets parallel to the avenue, joined to it by cross streets (the ring around the centre)
+        // --- the streets of the fixed village plan (village_plan.txt, checked for overlaps when it was made)
+        List<String[]> plan = new ArrayList<>();
+        try (var in = Village.class.getResourceAsStream("/village_plan.txt");
+             var reader = new java.io.BufferedReader(new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (!line.isEmpty() && !line.startsWith("#")) plan.add(line.split("\\s+"));
+            }
+        } catch (Exception e) {
+            org.bukkit.Bukkit.getLogger().warning("[SettlerIslands] Could not read village_plan.txt: " + e);
+        }
         List<List<double[]>> streets = new ArrayList<>();
-        for (int sv : new int[]{-BACK_S, BACK_S}) streets.add(line(m, 4, sv, CORE_T, sv));
-        for (int tv : new int[]{40, 88}) {
-            streets.add(line(m, tv, 4, tv, BACK_S - 2));
-            streets.add(line(m, tv, -4, tv, -BACK_S + 2));
+        for (String[] p : plan) {
+            if (!p[0].equals("path")) continue;
+            // a winding lower-tier path through the given points
+            List<double[]> st = new ArrayList<>();
+            for (int i = 1; i + 3 < p.length; i += 2) {
+                st.addAll(line(m, Integer.parseInt(p[i]), Integer.parseInt(p[i + 1]), Integer.parseInt(p[i + 2]), Integer.parseInt(p[i + 3])));
+            }
+            if (st.isEmpty()) continue;
+            streets.add(st);
+            rasterize(st, 1);
         }
-        streets.add(line(m, 4, SQUARE + 2, 4, BACK_S - 2));
-        streets.add(line(m, 4, -SQUARE - 2, 4, -BACK_S + 2));
-        streets.removeIf(List::isEmpty);
-        for (List<double[]> st : streets) rasterize(st, 1);
-
-        // --- the outer village: winding roads out from the ends of the back streets
-        List<List<double[]>> mains = new ArrayList<>();
-        double[][] starts = {{CORE_T + 2, BACK_S, 1, 0.8}, {CORE_T + 2, -BACK_S, 1, -0.8}, {64, BACK_S + 2, 0.2, 1},
-                {64, -BACK_S - 2, 0.2, -1}, {4, BACK_S + 2, -0.6, 1}, {4, -BACK_S - 2, -0.6, -1}};
-        for (double[] st : starts) {
-            double wx = lxd(st[0], st[1]), wz = lzd(st[0], st[1]);
-            double dx = ax * st[2] + (-az) * st[3], dz = az * st[2] + ax * st[3];
-            List<double[]> road = grow(m, rnd, wx, wz, Math.atan2(dz, dx), 45 + rnd.nextInt(35), false);
-            if (road.size() < 10) continue;
-            mains.add(road);
-            rasterize(road, 2);
-        }
-        List<List<double[]>> lanes = new ArrayList<>();
-        for (List<double[]> road : mains) for (int k = 10; k < road.size(); k += 17) addLamp(road.get(k), 3.5, k);
+        List<List<double[]>> mains = new ArrayList<>(), lanes = new ArrayList<>();
         for (List<double[]> st : streets) for (int k = 8; k < st.size(); k += 14) addLamp(st.get(k), 2.5, k);
 
         // --- city hall, its front on the edge of the square, facing down the avenue
@@ -161,14 +160,20 @@ public final class Village {
 
         planSquare(hallDir);
 
-        // --- houses: facing the avenue, then along the back streets (inside the ring), then the outer roads
+        // --- every house and field of the plan, exactly where the plan puts it
         List<int[]> boxes = new ArrayList<>();
         boxes.add(new int[]{cx - SQUARE - 2, cz - SQUARE - 2, cx + SQUARE + 2, cz + SQUARE + 2});
         boxes.add(new int[]{hallOx - 2, hallOz - 2, hallOx + hall.sizeX(hallRot) + 1, hallOz + hall.sizeZ(hallRot) + 1});
-        int[] counters = new int[3];   // deck, general station, smith station
-        avenueHouses = placeAlong(m, rnd, boxes, counters, List.of(avenue), 6, AVENUE_HOUSES, false, true);
-        ringHouses = placeAlong(m, rnd, boxes, counters, streets, 4, RING_HOUSES, true, true);
-        outerHouses = placeAlong(m, rnd, boxes, counters, mains, 5, OUTER_HOUSES, true, false);
+        int[] counters = new int[3];   // general station, smith station
+        int skipped = 0;
+        for (String[] p : plan) {
+            if (!p[0].equals("lot")) continue;
+            int t = Integer.parseInt(p[2]), sv = Integer.parseInt(p[3]);
+            int dt = Integer.parseInt(p[4]), ds = Integer.parseInt(p[5]);
+            int fx = ax * dt - az * ds, fz = az * dt + ax * ds;      // facing, in the world
+            if (placeLot(m, rnd, boxes, counters, p[1], lx(t, sv), lz(t, sv), fx, fz) == null) skipped++;
+        }
+        if (skipped > 0) org.bukkit.Bukkit.getLogger().warning("[SettlerIslands] " + skipped + " village lots were not on Meadow land and were left out");
         // paths from every door to the nearest road, walking round other buildings
         Set<Long> blocked = new HashSet<>();
         for (int[] bx : boxes.subList(1, boxes.size())) {
@@ -193,8 +198,7 @@ public final class Village {
         protectedCells.addAll(onPath);
         for (int[] bx : boxes) for (int x = bx[0]; x <= bx[2]; x++) for (int z = bx[1]; z <= bx[3]; z++) protectedCells.add(key(x, z));
         long houses = lots.stream().filter(Lot::house).count();
-        org.bukkit.Bukkit.getLogger().info("[SettlerIslands] Village planned: " + houses + " houses (" + avenueHouses + " on the avenue, "
-                + ringHouses + " inside the ring, " + outerHouses + " outside), " + (lots.size() - houses) + " fields and pens");
+        org.bukkit.Bukkit.getLogger().info("[SettlerIslands] Village built from the plan: " + houses + " houses, " + (lots.size() - houses) + " fields and pens");
     }
 
     // ---- layout frame helpers (t towards the harbour, s across)
@@ -267,6 +271,53 @@ public final class Village {
 
     private static Lot withPath(Lot l, List<Long> path) {
         return new Lot(l.type, l.ox, l.oz, l.sx, l.sz, l.rot, l.floorY, l.doorX, l.doorZ, l.fx, l.fz, l.vars, l.station, l.yard, path);
+    }
+
+    /**
+     * Puts a lot of the plan in place: its front (porch) at (frontX, frontZ), facing (fx, fz). It is
+     * only left out if the spot is not Meadow land (the plan itself has no overlaps).
+     */
+    private Lot placeLot(WorldModel m, Random rnd, List<int[]> boxes, int[] counters, String type, int frontX, int frontZ, int fx, int fz) {
+        int rot = Template.rotationFacing(fx, fz);
+        int[] f = facingVector(rot);
+        String[] style = STYLES[rnd.nextInt(STYLES.length)];
+        String station = switch (type) {
+            case "blacksmith" -> SMITH_STATIONS[counters[1]++ % SMITH_STATIONS.length];
+            case "farmhouse" -> "composter";
+            case "library" -> "lectern";
+            case "bakery" -> "smoker";
+            case "farm", "pen" -> "composter";
+            default -> GENERAL_STATIONS[counters[0]++ % GENERAL_STATIONS.length];
+        };
+        Map<String, String> vars = Map.of("roof", style[0], "log", style[1], "slog", style[2],
+                "plank", style[3], "wall", style[4], "station", station, "wool", style[5]);
+        int ox, oz, sx, sz;
+        Kind kind = KINDS.get(type);
+        if (kind == null) {
+            sx = sz = 9;
+            ox = frontX - f[0] * 4 - 4;
+            oz = frontZ - 4 - f[1] * 4;
+        } else {
+            Template tp = Template.get(kind.template());
+            int[] off = tp.offset(kind.doorCol(), kind.front(), rot);
+            ox = frontX - off[0];
+            oz = frontZ - off[1];
+            sx = tp.sizeX(rot);
+            sz = tp.sizeZ(rot);
+        }
+        int mx = ox + sx / 2, mz = oz + sz / 2;
+        WorldModel.Sample centre = m.sample(mx, mz);
+        if (!centre.land() || centre.zone() != Zone.MEADOW) return null;
+        // floor at the average height of the corners and the middle, so the house sits into the slope
+        int sum = 0;
+        for (int[] c : new int[][]{{ox, oz}, {ox + sx - 1, oz}, {ox, oz + sz - 1}, {ox + sx - 1, oz + sz - 1}, {mx, mz}, {mx, mz}})
+            sum += m.height(c[0], c[1], m.sample(c[0], c[1]));
+        int floorY = Math.max(Pier.DECK + 1, Math.round(sum / 6f));
+        boolean yard = false;
+        boxes.add(new int[]{ox - 1, oz - 1, ox + sx, oz + sz});
+        Lot lot = new Lot(type, ox, oz, sx, sz, rot, floorY, frontX, frontZ, f[0], f[1], vars, station, yard, List.of());
+        lots.add(lot);
+        return lot;
     }
 
     /** Tries to put a lot with its front at (frontX, frontZ), facing back along (nx, nz). */
@@ -573,10 +624,6 @@ public final class Village {
             if (sv == 0 && Math.floorMod(t, 8) == 0) return Material.CHISELED_STONE_BRICKS;
             if (sv <= 1) return h < 700 ? Material.POLISHED_ANDESITE : Material.ANDESITE;
             return h < 600 ? Material.STONE_BRICKS : h < 850 ? Material.POLISHED_ANDESITE : Material.CRACKED_STONE_BRICKS;
-        }
-        if (c.main == 1 && inCore(c.x, c.z)) {
-            // town streets: cobbles
-            return h < 450 ? Material.COBBLESTONE : h < 700 ? Material.STONE_BRICKS : h < 880 ? Material.ANDESITE : Material.GRAVEL;
         }
         if (c.dist < 30) {
             return h < 450 ? Material.STONE_BRICKS : h < 650 ? Material.COBBLESTONE : h < 820 ? Material.POLISHED_ANDESITE : Material.GRAVEL;
