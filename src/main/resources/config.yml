@@ -70,5 +70,5 @@ rules:
 
 # ------------------------------------------------------------------ ships
 ships:
-  # the sloop moves one block every this many ticks while sailing (3 = about 6.7 blocks a second)
-  ticks-per-block: 3
+  # top speed of a sailing ship in blocks per tick (0.32 = 6.4 blocks a second, a little slower than a boat)
+  max-speed: 0.32

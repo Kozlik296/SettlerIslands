@@ -74,15 +74,10 @@ public final class Ships implements Listener {
         final UUID owner;
         final String world;
         final String ownerName;
-        int ox, oy, oz, rot;
-        UUID captain, seat;
-        final List<UUID> wheel = new ArrayList<>();
-        float wheelAngle;
-        boolean sailing;
-        int moveCooldown, turnCooldown, blockedTicks;
-        boolean lastLeft, lastRight, lastForward, lastBack;
+        int ox, oy, oz, rot;          // anchored pose
+        Sailing sail;                 // set while the ship sails as a model
 
-        Ship(UUID id, UUID owner, String ownerName, String world, int ox, int oy, int oz, int rot) {
+                Ship(UUID id, UUID owner, String ownerName, String world, int ox, int oy, int oz, int rot) {
             this.id = id;
             this.owner = owner;
             this.ownerName = ownerName;
@@ -259,8 +254,22 @@ public final class Ships implements Listener {
         ships.put(s.id, s);
         indexShip(s, true);
         save();
+        // cargo packed into the item (only when a ship could not anchor) goes back into its chests
+        List<byte[]> packed = event.getItem().getItemMeta().getPersistentDataContainer().get(cargoKey(), PersistentDataType.LIST.byteArrays());
+        if (packed != null && !packed.isEmpty()) {
+            List<ItemStack> items = new ArrayList<>();
+            for (byte[] b : packed) items.add(ItemStack.deserializeBytes(b));
+            for (int[] c : cells(s.ox, s.oy, s.oz, s.rot)) {
+                if (c[6] < 2 || items.isEmpty()) continue;
+                if (w.getBlockAt(c[3], c[4], c[5]).getState() instanceof Container box) {
+                    var left = box.getInventory().addItem(items.toArray(new ItemStack[0]));
+                    items = new ArrayList<>(left.values());
+                }
+            }
+            for (ItemStack it : items) w.dropItem(p.getLocation(), it);
+        }
         if (p.getGameMode() != org.bukkit.GameMode.CREATIVE) event.getItem().setAmount(event.getItem().getAmount() - 1);
-        p.sendMessage(Component.text("Ship launched! Right-click the helm to take the wheel: W sail, S stop, A/D turn, sneak to leave.", NamedTextColor.GREEN));
+        p.sendMessage(Component.text("Ship launched! Right-click the helm to set sail: W/S speed, A/D steer, Space drops anchor.", NamedTextColor.GREEN));
     }
 
     private boolean fits(World w, int ox, int oy, int oz, int rot, int waterTop) {
@@ -317,122 +326,211 @@ public final class Ships implements Listener {
 
     // ---------------------------------------------------------------- helm
 
+    // ================================================================ sailing
+    //
+    // Anchored, the ship is real blocks. Setting sail turns it into a smooth model (block displays
+    // riding one root entity) that moves and turns freely with simple boat physics; everyone who was
+    // on deck sits in a seat. Dropping anchor (space) turns it back into blocks at the nearest spot.
+
+    /** Seats in template coordinates (the first is the captain's, behind the wheel). */
+    private static final double[][] SEATS = {{3.5, 3.0, 1.5}, {1.5, 2.0, 8.5}, {5.5, 2.0, 8.5}, {3.5, 2.0, 11.0}};
+    private static final double WHEEL_X = 3.5, WHEEL_Y = 4.35, WHEEL_Z = 2.95;
+
+    /** State of a ship while it sails. */
+    private static final class Sailing {
+        double x, z, yaw, speed;       // centre of the ship (world), heading (Minecraft yaw), blocks per tick
+        int waterTop;
+        UUID root;
+        final List<UUID> parts = new ArrayList<>();       // one display per block, same order as partCells
+        final List<int[]> partCells = new ArrayList<>();   // template x, y, z, palette index
+        final List<UUID> wheel = new ArrayList<>();
+        final UUID[] seats = new UUID[SEATS.length];
+        final Map<Integer, UUID> chestHandles = new HashMap<>();   // cell id -> interaction entity
+        final Map<Integer, org.bukkit.inventory.Inventory> cargo = new HashMap<>();
+        UUID captain;
+        double shownYaw = Double.NaN;
+        float wheelSpin;
+        boolean lastJump;
+    }
+
+    /** Holder so a cargo window knows which ship and chest it belongs to. */
+    private static final class CargoHolder implements org.bukkit.inventory.InventoryHolder {
+        org.bukkit.inventory.Inventory inv;
+
+        @Override
+        public org.bukkit.inventory.Inventory getInventory() {
+            return inv;
+        }
+    }
+
+    private BoundingBox box(Ship s) {
+        Template t = tp();
+        return new BoundingBox(s.ox, s.oy, s.oz, s.ox + t.sizeX(s.rot), s.oy + t.h + 2, s.oz + t.sizeZ(s.rot));
+    }
+
+    /** Set while the plugin itself takes people off the seats (then dismounting is allowed). */
+    private boolean releasing;
+
     private void helm(Player p, Ship s) {
         if (p.isSneaking()) {
             pack(p, s);
             return;
         }
-        if (s.captain != null) {
-            Player c = Bukkit.getPlayer(s.captain);
-            if (c != null && c.isOnline()) {
-                msg(p, c.getName() + " is at the wheel.");
-                return;
-            }
-            leaveHelm(s);
-        }
+        if (s.sail != null) return;
+        setSail(p, s);
+    }
+
+    /** Local (template) point -> offset from the ship centre, turned by the heading. */
+    private static double[] turn(double tx, double tz, Template t, double yaw) {
+        double lx = tx - t.w / 2.0, lz = tz - t.d / 2.0;
+        double a = Math.toRadians(yaw);
+        // template +z (bow) points along the heading: (x, z) = (-sin yaw, cos yaw)
+        double wx = lx * Math.cos(a) - lz * Math.sin(a);
+        double wz = lx * Math.sin(a) + lz * Math.cos(a);
+        return new double[]{wx, wz};
+    }
+
+    private Location at(Sailing sl, World w, double tx, double ty, double tz) {
+        double[] o = turn(tx, tz, tp(), sl.yaw);
+        return new Location(w, sl.x + o[0], sl.waterTop - 1 + ty, sl.z + o[1]);
+    }
+
+    private void setSail(Player captain, Ship s) {
         World w = Bukkit.getWorld(s.world);
         if (w == null) return;
-        // the captain sits behind the wheel, looking towards the bow
-        Location seatLoc = point(s, 3.5, 2.75, 1.5);
-        seatLoc.setYaw(s.rot * 90f);
-        ArmorStand seat = w.spawn(seatLoc, ArmorStand.class, a -> {
-            a.setInvisible(true);
-            a.setMarker(true);
-            a.setGravity(false);
-            a.setInvulnerable(true);
-            a.setSmall(true);
-            a.setPersistent(false);
-        });
-        seat.addPassenger(p);
-        s.captain = p.getUniqueId();
-        s.seat = seat.getUniqueId();
-        s.sailing = false;
-        s.lastLeft = s.lastRight = s.lastForward = s.lastBack = false;
-        spawnWheel(w, s);
-        p.sendActionBar(Component.text("W: set sail   S: stop   A / D: turn   Sneak: leave the wheel", NamedTextColor.GOLD));
-    }
-
-    private void leaveHelm(Ship s) {
-        if (s.seat != null) {
-            Entity e = Bukkit.getEntity(s.seat);
-            if (e != null) {
-                e.eject();
-                e.remove();
-            }
-        }
-        for (UUID id : s.wheel) {
-            Entity e = Bukkit.getEntity(id);
-            if (e != null) e.remove();
-        }
-        s.wheel.clear();
-        s.seat = null;
-        s.captain = null;
-        s.sailing = false;
-    }
-
-    @EventHandler
-    public void onDismount(EntityDismountEvent event) {
-        for (Ship s : ships.values()) {
-            if (s.seat != null && s.seat.equals(event.getDismounted().getUniqueId())) {
-                Player p = event.getEntity() instanceof Player pl ? pl : null;
-                Bukkit.getScheduler().runTask(plugin, () -> {
-                    leaveHelm(s);
-                    if (p != null) p.sendActionBar(Component.text("You left the wheel - the ship stops.", NamedTextColor.YELLOW));
-                });
-                return;
-            }
-        }
-    }
-
-    @EventHandler
-    public void onQuit(PlayerQuitEvent event) {
-        for (Ship s : ships.values()) if (event.getPlayer().getUniqueId().equals(s.captain)) leaveHelm(s);
-    }
-
-    /** Removes seats and wheels (on shutdown). */
-    public void shutdown() {
-        for (Ship s : ships.values()) leaveHelm(s);
-        save();
-    }
-
-    // ---------------------------------------------------------------- the wheel
-
-    /** A point given in template coordinates (blocks, may be fractional) as a world location. */
-    private Location point(Ship s, double tx, double ty, double tz) {
         Template t = tp();
-        double x = tx, z = tz;
-        int w = t.w, d = t.d;
-        // the same turn as Template.offset, for points instead of cells
-        for (int i = 0; i < (s.rot & 3); i++) {
-            double nx = d - z, nz = x;
-            x = nx;
-            z = nz;
-            int tmp = w;
-            w = d;
-            d = tmp;
+        List<int[]> cs = cells(s.ox, s.oy, s.oz, s.rot);
+        Sailing sl = new Sailing();
+        sl.waterTop = s.oy + 1;
+        sl.x = s.ox + t.sizeX(s.rot) / 2.0;
+        sl.z = s.oz + t.sizeZ(s.rot) / 2.0;
+        sl.yaw = s.rot * 90.0;
+        sl.captain = captain.getUniqueId();
+        // who is on deck goes into the seats (the captain behind the wheel)
+        List<Player> crew = new ArrayList<>();
+        crew.add(captain);
+        for (Entity e : w.getNearbyEntities(box(s).expand(0.5))) {
+            if (e instanceof Player pl && !pl.equals(captain) && crew.size() < SEATS.length) crew.add(pl);
         }
-        return new Location(Bukkit.getWorld(s.world), s.ox + x, s.oy + ty, s.oz + z);
+        // cargo into windows, blocks away
+        for (int[] c : cs) {
+            if (c[6] < 2) continue;
+            if (w.getBlockAt(c[3], c[4], c[5]).getState() instanceof Container box) {
+                CargoHolder h = new CargoHolder();
+                org.bukkit.inventory.Inventory inv = Bukkit.createInventory(h, 27, Component.text(s.ownerName + "'s ship - cargo"));
+                h.inv = inv;
+                ItemStack[] items = box.getInventory().getContents();
+                for (int i = 0; i < items.length && i < 27; i++) if (items[i] != null) inv.setItem(i, items[i].clone());
+                sl.cargo.put(cellId(c), inv);
+            }
+        }
+        indexShip(s, false);
+        clear(w, s, cs);
+        s.sail = sl;
+        // the model: one display per block, all riding one root
+        Location rootLoc = new Location(w, sl.x, sl.waterTop - 1, sl.z);
+        org.bukkit.entity.ItemDisplay root = w.spawn(rootLoc, org.bukkit.entity.ItemDisplay.class, d -> {
+            d.setPersistent(false);
+            d.setTeleportDuration(2);
+        });
+        sl.root = root.getUniqueId();
+        for (int y = 0; y < t.h; y++)
+            for (int z = 0; z < t.d; z++)
+                for (int x = 0; x < t.w; x++) {
+                    int idx = t.paletteIndex(x, y, z);
+                    if (idx < 2) continue;
+                    BlockData data = t.data(idx, 0);
+                    if (data instanceof org.bukkit.block.data.type.WallSign) continue;     // the helm sign stays behind
+                    int[] cell = {x, y, z, idx};
+                    BlockDisplay d = w.spawn(rootLoc, BlockDisplay.class, e -> {
+                        e.setBlock(joinedFence(t, cell, data));
+                        e.setPersistent(false);
+                        e.setInterpolationDuration(2);
+                        e.setTransformation(partTransform(t, cell, sl.yaw));
+                    });
+                    root.addPassenger(d);
+                    sl.parts.add(d.getUniqueId());
+                    sl.partCells.add(cell);
+                }
+        for (int i = 0; i < 1 + SPOKES + RIM; i++) {
+            int part = i;
+            BlockDisplay d = w.spawn(rootLoc, BlockDisplay.class, e -> {
+                e.setBlock(Bukkit.createBlockData(part == 0 ? Material.DARK_OAK_PLANKS : part <= SPOKES ? Material.STRIPPED_SPRUCE_LOG : Material.SPRUCE_PLANKS));
+                e.setPersistent(false);
+                e.setInterpolationDuration(2);
+                e.setTransformation(wheelTransform(t, part, sl.yaw, 0));
+            });
+            root.addPassenger(d);
+            sl.wheel.add(d.getUniqueId());
+        }
+        sl.shownYaw = sl.yaw;
+        // seats and chest handles (moved every tick)
+        for (int i = 0; i < SEATS.length; i++) {
+            Location l = at(sl, w, SEATS[i][0], SEATS[i][1], SEATS[i][2]);
+            l.setYaw((float) sl.yaw);
+            ArmorStand seat = w.spawn(l, ArmorStand.class, a -> {
+                a.setInvisible(true);
+                a.setMarker(true);
+                a.setGravity(false);
+                a.setInvulnerable(true);
+                a.setPersistent(false);
+            });
+            sl.seats[i] = seat.getUniqueId();
+        }
+        for (int i = 0; i < crew.size(); i++) java.util.Objects.requireNonNull(Bukkit.getEntity(sl.seats[i])).addPassenger(crew.get(i));
+        for (int[] c : cs) {
+            if (!sl.cargo.containsKey(cellId(c))) continue;
+            Location l = at(sl, w, c[0] + 0.5, c[1], c[2] + 0.5);
+            org.bukkit.entity.Interaction handle = w.spawn(l, org.bukkit.entity.Interaction.class, it -> {
+                it.setInteractionWidth(1.0f);
+                it.setInteractionHeight(1.0f);
+                it.setPersistent(false);
+            });
+            sl.chestHandles.put(cellId(c), handle.getUniqueId());
+        }
+        captain.sendActionBar(Component.text("W/S: speed   A/D: steer   Space: drop anchor (when slow)", NamedTextColor.GOLD));
+        for (Player pl : crew) if (!pl.equals(captain)) pl.sendActionBar(Component.text("All aboard! Right-click a chest for the cargo.", NamedTextColor.GOLD));
+    }
+
+    /** Fences in the model are joined like the placed ones (connections are fixed per block data). */
+    private static BlockData joinedFence(Template t, int[] cell, BlockData data) {
+        if (!(data instanceof org.bukkit.block.data.type.Fence fence)) return data;
+        fence = (org.bukkit.block.data.type.Fence) fence.clone();
+        int[][] dirs = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
+        org.bukkit.block.BlockFace[] faces = {org.bukkit.block.BlockFace.NORTH, org.bukkit.block.BlockFace.EAST,
+                org.bukkit.block.BlockFace.SOUTH, org.bukkit.block.BlockFace.WEST};
+        for (int i = 0; i < 4; i++) {
+            int nx = cell[0] + dirs[i][0], nz = cell[2] + dirs[i][1];
+            boolean join = false;
+            if (nx >= 0 && nz >= 0 && nx < t.w && nz < t.d) {
+                int idx = t.paletteIndex(nx, cell[1], nz);
+                if (idx >= 2) {
+                    BlockData n = t.data(idx, 0);
+                    join = n instanceof org.bukkit.block.data.type.Fence || n.getMaterial().isOccluding();
+                }
+            }
+            fence.setFace(faces[i], join);
+        }
+        return fence;
+    }
+
+    /** Where a block of the model sits relative to the root, for a heading. */
+    private static Transformation partTransform(Template t, int[] cell, double yaw) {
+        Quaternionf q = new Quaternionf(new AxisAngle4f((float) Math.toRadians(-yaw), 0, 1, 0));
+        Vector3f corner = new Vector3f((float) (cell[0] - t.w / 2.0), cell[1], (float) (cell[2] - t.d / 2.0)).rotate(q);
+        return new Transformation(corner, q, new Vector3f(1, 1, 1), new Quaternionf());
+    }
+
+    private static Transformation wheelTransform(Template t, int part, double yaw, float spin) {
+        Transformation local = wheelPart(part, spin);
+        Quaternionf q = new Quaternionf(new AxisAngle4f((float) Math.toRadians(-yaw), 0, 1, 0));
+        Vector3f centre = new Vector3f((float) (WHEEL_X - t.w / 2.0), (float) WHEEL_Y, (float) (WHEEL_Z - t.d / 2.0));
+        Vector3f tr = new Vector3f(local.getTranslation()).add(centre).rotate(q);
+        Quaternionf rot = new Quaternionf(q).mul(local.getLeftRotation());
+        return new Transformation(tr, rot, local.getScale(), new Quaternionf());
     }
 
     private static final int SPOKES = 4, RIM = 8;
-
-    private void spawnWheel(World w, Ship s) {
-        Location at = point(s, 3.5, 4.35, 2.95);
-        at.setYaw(s.rot * 90f);
-        at.setPitch(0);
-        int n = 1 + SPOKES + RIM;
-        for (int i = 0; i < n; i++) {
-            int part = i;
-            BlockDisplay d = w.spawn(at, BlockDisplay.class, e -> {
-                e.setBlock(Bukkit.createBlockData(part == 0 ? Material.DARK_OAK_PLANKS : part <= SPOKES ? Material.STRIPPED_SPRUCE_LOG : Material.SPRUCE_PLANKS));
-                e.setPersistent(false);
-                e.setTeleportDuration(Math.max(1, plugin.getConfig().getInt("ships.ticks-per-block", 3)));
-                e.setTransformation(wheelPart(part, s.wheelAngle));
-                e.setBrightness(new Display.Brightness(12, 12));
-            });
-            s.wheel.add(d.getUniqueId());
-        }
-    }
 
     /** Part 0 is the hub, then the spokes (bars across the whole wheel), then the rim pieces. */
     private static Transformation wheelPart(int part, float spinDeg) {
@@ -461,15 +559,263 @@ public final class Ships implements Listener {
         return new Transformation(new Vector3f(centre).sub(half), q, new Vector3f(len, wid, wid), new Quaternionf());
     }
 
-    private void turnWheel(Ship s, int dir) {
-        s.wheelAngle += dir * 90f;
-        for (int i = 0; i < s.wheel.size(); i++) {
-            if (Bukkit.getEntity(s.wheel.get(i)) instanceof BlockDisplay d) {
-                d.setInterpolationDelay(0);
-                d.setInterpolationDuration(10);
-                d.setTransformation(wheelPart(i, s.wheelAngle));
+    /** Can the ship sit at this centre and heading (every block over water or in the air)? */
+    private boolean clearAt(World w, Sailing sl, double cx, double cz, double yaw) {
+        Template t = tp();
+        for (int[] c : sl.partCells) {
+            double[] o = turn(c[0] + 0.5, c[2] + 0.5, t, yaw);
+            int bx = (int) Math.floor(cx + o[0]), bz = (int) Math.floor(cz + o[1]), by = sl.waterTop - 1 + c[1];
+            if (!w.isChunkLoaded(bx >> 4, bz >> 4)) return false;
+            Block b = w.getBlockAt(bx, by, bz);
+            Material m = b.getType();
+            if (m.isAir() || m == Material.WATER || m == Material.SEAGRASS || m == Material.TALL_SEAGRASS || m == Material.KELP
+                    || m == Material.KELP_PLANT || m == Material.BUBBLE_COLUMN || !m.isSolid()) continue;
+            return false;
+        }
+        return w.getWorldBorder().isInside(new Location(w, cx, sl.waterTop, cz));
+    }
+
+    private void tick() {
+        double max = plugin.getConfig().getDouble("ships.max-speed", 0.32);
+        for (Ship s : new ArrayList<>(ships.values())) {
+            Sailing sl = s.sail;
+            if (sl == null) continue;
+            World w = Bukkit.getWorld(s.world);
+            Entity root = Bukkit.getEntity(sl.root);
+            Player cap = Bukkit.getPlayer(sl.captain);
+            if (w == null || root == null) {
+                anchor(s, null);
+                continue;
+            }
+            boolean atWheel = cap != null && cap.getVehicle() != null && cap.getVehicle().getUniqueId().equals(sl.seats[0]);
+            double turnInput = 0;
+            if (atWheel) {
+                org.bukkit.Input in = cap.getCurrentInput();
+                if (in.isForward()) sl.speed = Math.min(max, sl.speed + 0.006);
+                else if (in.isBackward()) sl.speed = Math.max(-max * 0.25, sl.speed - 0.012);
+                if (in.isLeft() && !in.isRight()) turnInput = 1;      // A: to port
+                if (in.isRight() && !in.isLeft()) turnInput = -1;     // D: to starboard
+                if (in.isJump() && !sl.lastJump) {
+                    if (Math.abs(sl.speed) > 0.08) cap.sendActionBar(Component.text("Too fast to drop anchor - slow down with S.", NamedTextColor.RED));
+                    else anchor(s, cap);
+                }
+                sl.lastJump = in.isJump();
+                if (s.sail == null) continue;
+            }
+            if (!atWheel || turnInput == 0) sl.speed *= 0.992;                 // the ship drifts and slows by itself
+            if (Math.abs(sl.speed) < 0.001) sl.speed = 0;
+            // turning: faster when moving, a little even when standing still
+            double rate = 0.6 + 2.4 * Math.min(1, Math.abs(sl.speed) / max);
+            double nyaw = sl.yaw + turnInput * rate * (sl.speed < 0 ? -1 : 1) * -1;
+            double a = Math.toRadians(nyaw);
+            double nx = sl.x - Math.sin(a) * sl.speed, nz = sl.z + Math.cos(a) * sl.speed;
+            if (clearAt(w, sl, nx, nz, nyaw)) {
+                sl.x = nx;
+                sl.z = nz;
+                sl.yaw = nyaw;
+            } else if (clearAt(w, sl, sl.x, sl.z, nyaw)) {
+                sl.yaw = nyaw;
+                sl.speed = 0;
+            } else {
+                if (Math.abs(sl.speed) > 0.05 && atWheel) cap.sendActionBar(Component.text("Bump! Something is in the way.", NamedTextColor.RED));
+                sl.speed = 0;
+            }
+            sl.wheelSpin += (float) (turnInput * 6);
+            show(w, s, sl, root);
+            if (atWheel && sl.speed != 0 && w.getGameTime() % 10 == 0) {
+                cap.sendActionBar(Component.text(String.format("Speed %.1f blocks/s   (Space: drop anchor when slow)", Math.abs(sl.speed) * 20), NamedTextColor.AQUA));
             }
         }
+    }
+
+    /** Moves the model, seats and chest handles to the current position and heading. */
+    private void show(World w, Ship s, Sailing sl, Entity root) {
+        Template t = tp();
+        root.teleport(new Location(w, sl.x, sl.waterTop - 1, sl.z), TeleportFlag.EntityState.RETAIN_PASSENGERS);
+        boolean turned = Double.isNaN(sl.shownYaw) || Math.abs(sl.yaw - sl.shownYaw) > 0.05;
+        if (turned) {
+            for (int i = 0; i < sl.parts.size(); i++) {
+                if (Bukkit.getEntity(sl.parts.get(i)) instanceof BlockDisplay d) {
+                    d.setInterpolationDelay(0);
+                    d.setInterpolationDuration(2);
+                    d.setTransformation(partTransform(t, sl.partCells.get(i), sl.yaw));
+                }
+            }
+            sl.shownYaw = sl.yaw;
+        }
+        for (int i = 0; i < sl.wheel.size(); i++) {
+            if (Bukkit.getEntity(sl.wheel.get(i)) instanceof BlockDisplay d) {
+                d.setInterpolationDelay(0);
+                d.setInterpolationDuration(2);
+                d.setTransformation(wheelTransform(t, i, sl.yaw, sl.wheelSpin));
+            }
+        }
+        for (int i = 0; i < SEATS.length; i++) {
+            Entity seat = Bukkit.getEntity(sl.seats[i]);
+            if (seat == null) continue;
+            Location l = at(sl, w, SEATS[i][0], SEATS[i][1], SEATS[i][2]);
+            l.setYaw((float) sl.yaw);
+            seat.teleport(l, TeleportFlag.EntityState.RETAIN_PASSENGERS);
+        }
+        for (Map.Entry<Integer, UUID> e : sl.chestHandles.entrySet()) {
+            Entity h = Bukkit.getEntity(e.getValue());
+            if (h == null) continue;
+            int id = e.getKey();
+            int x = id % 64, z = (id / 64) % 64, y = id / 4096;
+            h.teleport(at(sl, w, x + 0.5, y, z + 0.5));
+        }
+    }
+
+    /**
+     * Drops anchor: the ship becomes blocks again at the nearest free spot (snapped to the grid and to
+     * a quarter turn), cargo goes back into its chests and the crew stands up on deck. If there is no
+     * room anywhere near, the ship is packed into an item for its owner with the cargo inside.
+     */
+    private void anchor(Ship s, Player by) {
+        Sailing sl = s.sail;
+        if (sl == null) return;
+        World w = Bukkit.getWorld(s.world);
+        Template t = tp();
+        List<Player> crew = new ArrayList<>();
+        for (UUID id : sl.seats) {
+            Entity seat = id == null ? null : Bukkit.getEntity(id);
+            if (seat == null) continue;
+            for (Entity p : seat.getPassengers()) if (p instanceof Player pl) crew.add(pl);
+        }
+        int rot = Template.rotationFacing(-Math.sin(Math.toRadians(sl.yaw)), Math.cos(Math.toRadians(sl.yaw)));
+        int[] spot = null;
+        if (w != null) {
+            search:
+            for (int r = 0; r <= 12; r++)
+                for (int dx = -r; dx <= r; dx++)
+                    for (int dz = -r; dz <= r; dz++) {
+                        if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
+                        for (int turn : new int[]{0, 1, 3, 2}) {
+                            int rr = (rot + turn) & 3;
+                            int ox = (int) Math.round(sl.x - t.sizeX(rr) / 2.0) + dx, oz = (int) Math.round(sl.z - t.sizeZ(rr) / 2.0) + dz;
+                            if (fits(w, ox, sl.waterTop - 1, oz, rr, sl.waterTop)) {
+                                spot = new int[]{ox, oz, rr};
+                                break search;
+                            }
+                        }
+                    }
+        }
+        s.sail = null;
+        removeModel(sl);
+        Map<Integer, ItemStack[]> cargo = new HashMap<>();
+        for (Map.Entry<Integer, org.bukkit.inventory.Inventory> e : sl.cargo.entrySet()) {
+            for (org.bukkit.entity.HumanEntity v : new ArrayList<>(e.getValue().getViewers())) v.closeInventory();
+            cargo.put(e.getKey(), e.getValue().getContents());
+        }
+        if (spot == null || w == null) {
+            // nowhere to anchor: give the ship back as an item, cargo inside it
+            ships.remove(s.id);
+            save();
+            ItemStack item = item();
+            ItemMeta meta = item.getItemMeta();
+            List<byte[]> all = new ArrayList<>();
+            for (ItemStack[] arr : cargo.values()) for (ItemStack it : arr) if (it != null && !it.getType().isAir()) all.add(it.serializeAsBytes());
+            meta.getPersistentDataContainer().set(cargoKey(), PersistentDataType.LIST.byteArrays(), all);
+            item.setItemMeta(meta);
+            Player owner = Bukkit.getPlayer(s.owner);
+            Player to = by != null ? by : owner;
+            if (to != null) {
+                to.getInventory().addItem(item).values().forEach(left -> to.getWorld().dropItem(to.getLocation(), left));
+                to.sendMessage(Component.text("No room to anchor here - the ship was packed up with its cargo inside.", NamedTextColor.YELLOW));
+            }
+            return;
+        }
+        s.ox = spot[0];
+        s.oz = spot[1];
+        s.rot = spot[2];
+        build(w, s, cargo);
+        indexShip(s, true);
+        save();
+        // the crew stands up where they sat
+        for (int i = 0; i < crew.size(); i++) {
+            double[] seat = SEATS[Math.min(i, SEATS.length - 1)];
+            int[] off = t.offset((int) seat[0], (int) seat[2], s.rot);
+            crew.get(i).teleport(new Location(w, s.ox + off[0] + 0.5, s.oy + seat[1] + 0.05, s.oz + off[1] + 0.5,
+                    crew.get(i).getLocation().getYaw(), crew.get(i).getLocation().getPitch()));
+        }
+        if (by != null) by.sendActionBar(Component.text("Anchor dropped. Right-click the helm to sail again.", NamedTextColor.GREEN));
+    }
+
+    private void removeModel(Sailing sl) {
+        for (UUID id : sl.seats) {
+            Entity e = id == null ? null : Bukkit.getEntity(id);
+            if (e != null) {
+                releasing = true;
+                e.eject();
+                releasing = false;
+                e.remove();
+            }
+        }
+        List<UUID> all = new ArrayList<>(sl.parts);
+        all.addAll(sl.wheel);
+        all.addAll(sl.chestHandles.values());
+        all.add(sl.root);
+        for (UUID id : all) {
+            Entity e = id == null ? null : Bukkit.getEntity(id);
+            if (e != null) e.remove();
+        }
+    }
+
+    private NamespacedKey cargoKey() {
+        return new NamespacedKey(plugin, "ship_cargo");
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onDismount(EntityDismountEvent event) {
+        if (releasing || (event.getEntity() instanceof Player dead && (dead.isDead() || !dead.isOnline()))) return;
+        for (Ship s : ships.values()) {
+            if (s.sail == null) continue;
+            for (UUID id : s.sail.seats) {
+                if (id != null && id.equals(event.getDismounted().getUniqueId()) && event.getEntity() instanceof Player p) {
+                    // nobody falls off a sailing ship by accident: drop anchor first
+                    event.setCancelled(true);
+                    p.sendActionBar(Component.text("The ship is sailing - the captain drops anchor with Space.", NamedTextColor.YELLOW));
+                    return;
+                }
+            }
+        }
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+        for (Ship s : new ArrayList<>(ships.values())) {
+            if (s.sail == null) continue;
+            if (event.getPlayer().getUniqueId().equals(s.sail.captain)) anchor(s, null);
+            else for (UUID id : s.sail.seats) {
+                Entity seat = id == null ? null : Bukkit.getEntity(id);
+                if (seat != null && seat.getPassengers().contains(event.getPlayer())) {
+                    releasing = true;
+                    seat.removePassenger(event.getPlayer());
+                    releasing = false;
+                }
+            }
+        }
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onHandle(org.bukkit.event.player.PlayerInteractEntityEvent event) {
+        if (!(event.getRightClicked() instanceof org.bukkit.entity.Interaction it)) return;
+        for (Ship s : ships.values()) {
+            if (s.sail == null) continue;
+            for (Map.Entry<Integer, UUID> e : s.sail.chestHandles.entrySet()) {
+                if (e.getValue().equals(it.getUniqueId())) {
+                    event.setCancelled(true);
+                    event.getPlayer().openInventory(s.sail.cargo.get(e.getKey()));
+                    return;
+                }
+            }
+        }
+    }
+
+    /** Drops anchor everywhere (on shutdown). */
+    public void shutdown() {
+        for (Ship s : new ArrayList<>(ships.values())) if (s.sail != null) anchor(s, null);
+        save();
     }
 
     private void pack(Player p, Ship s) {
@@ -487,7 +833,6 @@ public final class Ships implements Listener {
                 return;
             }
         }
-        leaveHelm(s);
         indexShip(s, false);
         clear(w, s, cs);
         ships.remove(s.id);
@@ -506,133 +851,14 @@ public final class Ships implements Listener {
         }
     }
 
-    // ---------------------------------------------------------------- sailing
-
-    private void tick() {
-        int every = Math.max(1, plugin.getConfig().getInt("ships.ticks-per-block", 3));
-        for (Ship s : new ArrayList<>(ships.values())) {
-            if (s.captain == null) continue;
-            Player cap = Bukkit.getPlayer(s.captain);
-            World w = Bukkit.getWorld(s.world);
-            if (cap == null || w == null || cap.getVehicle() == null || !cap.getVehicle().getUniqueId().equals(s.seat)) {
-                leaveHelm(s);
-                continue;
-            }
-            org.bukkit.Input in = cap.getCurrentInput();
-            boolean left = in.isLeft(), right = in.isRight(), fwd = in.isForward(), back = in.isBackward();
-            if (fwd && !s.lastForward && !s.sailing) {
-                s.sailing = true;
-                cap.sendActionBar(Component.text("Sails up!", NamedTextColor.GREEN));
-            }
-            if (back && !s.lastBack && s.sailing) {
-                s.sailing = false;
-                cap.sendActionBar(Component.text("Sails down - the ship stops.", NamedTextColor.YELLOW));
-            }
-            if (s.turnCooldown > 0) s.turnCooldown--;
-            int turn = right && !left ? 1 : left && !right ? -1 : 0;
-            boolean pressed = (right && !s.lastRight) || (left && !s.lastLeft);
-            if (turn != 0 && (pressed || s.turnCooldown == 0) && s.turnCooldown == 0) {
-                if (move(w, s, 0, 0, turn)) {
-                    turnWheel(s, turn);
-                    s.turnCooldown = 16;
-                } else if (pressed) {
-                    cap.sendActionBar(Component.text("Not enough room to turn here.", NamedTextColor.RED));
-                }
-            }
-            s.lastLeft = left;
-            s.lastRight = right;
-            s.lastForward = fwd;
-            s.lastBack = back;
-            if (s.sailing && ++s.moveCooldown >= every) {
-                s.moveCooldown = 0;
-                int[] f = facing(s.rot);
-                if (move(w, s, f[0], f[1], 0)) s.blockedTicks = 0;
-                else if (++s.blockedTicks == 1) {
-                    cap.sendActionBar(Component.text("Something is in the way - turn with A / D.", NamedTextColor.RED));
-                    s.sailing = false;
-                }
-            }
-        }
-    }
-
-    private BoundingBox box(Ship s) {
-        Template t = tp();
-        return new BoundingBox(s.ox, s.oy, s.oz, s.ox + t.sizeX(s.rot), s.oy + t.h + 2, s.oz + t.sizeZ(s.rot));
-    }
-
-    private boolean onBoard(Ship s, Location l) {
-        return box(s).expand(0.5).contains(l.toVector());
-    }
-
-    /**
-     * Moves the ship by (dx, dz) or turns it a quarter clockwise (turn 1) or anticlockwise (-1)
-     * about its middle, with everything on board. Returns false if something is in the way.
-     */
-    private boolean move(World w, Ship s, int dx, int dz, int turn) {
-        Template t = tp();
-        int nrot = (s.rot + turn) & 3;
-        double cx = s.ox + t.sizeX(s.rot) / 2.0, cz = s.oz + t.sizeZ(s.rot) / 2.0;
-        int nox = s.ox + dx, noz = s.oz + dz;
-        if (turn != 0) {
-            nox = (int) Math.round(cx - t.sizeX(nrot) / 2.0);
-            noz = (int) Math.round(cz - t.sizeZ(nrot) / 2.0);
-        }
-        List<int[]> old = cells(s.ox, s.oy, s.oz, s.rot);
-        List<int[]> next = cells(nox, s.oy, noz, nrot);
-        int waterTop = s.oy + 1;
-        for (int[] c : next) {
-            if (!w.isChunkLoaded(c[3] >> 4, c[5] >> 4)) return false;
-            Block b = w.getBlockAt(c[3], c[4], c[5]);
-            UUID here = index.get(key(s.world, c[3], c[4], c[5]));
-            if (s.id.equals(here)) continue;
-            if (!freeForHull(b, waterTop)) return false;
-        }
-        // remember the cargo and who is on board
-        Map<Integer, ItemStack[]> cargo = new HashMap<>();
-        for (int[] c : old) {
-            if (c[6] < 2) continue;
-            if (w.getBlockAt(c[3], c[4], c[5]).getState() instanceof Container box) {
-                ItemStack[] items = box.getInventory().getContents();
-                for (int i = 0; i < items.length; i++) if (items[i] != null) items[i] = items[i].clone();
-                cargo.put(cellId(c), items);
-            }
-        }
-        List<Entity> riders = new ArrayList<>();
-        for (Entity e : w.getNearbyEntities(box(s).expand(0.5))) {
-            if (e instanceof Hanging || e.isInsideVehicle()) continue;
-            riders.add(e);
-        }
-        indexShip(s, false);
-        clear(w, s, old);
-        s.ox = nox;
-        s.oz = noz;
-        s.rot = nrot;
-        build(w, s, cargo);
-        indexShip(s, true);
-        for (Entity e : riders) {
-            Location l = e.getLocation();
-            if (turn == 0) {
-                l.add(dx, 0, dz);
-            } else {
-                double rx = l.getX() - cx, rz = l.getZ() - cz;
-                double nx = turn > 0 ? -rz : rz, nz = turn > 0 ? rx : -rx;
-                double ncx = nox + t.sizeX(nrot) / 2.0, ncz = noz + t.sizeZ(nrot) / 2.0;
-                l.setX(ncx + nx);
-                l.setZ(ncz + nz);
-                l.setYaw(l.getYaw() + 90f * turn);
-            }
-            e.teleport(l, TeleportFlag.EntityState.RETAIN_PASSENGERS, TeleportFlag.EntityState.RETAIN_OPEN_INVENTORY);
-        }
-        return true;
-    }
-
     /** Ships in a world for the map: {x, z} and "Name's ship". */
     public List<Map.Entry<double[], String>> markers(World w) {
         List<Map.Entry<double[], String>> out = new ArrayList<>();
         Template t = tp();
         for (Ship s : ships.values()) {
             if (!s.world.equals(w.getName())) continue;
-            out.add(Map.entry(new double[]{s.ox + t.sizeX(s.rot) / 2.0, s.oz + t.sizeZ(s.rot) / 2.0}, s.ownerName + "'s ship"));
+            double[] at = s.sail != null ? new double[]{s.sail.x, s.sail.z} : new double[]{s.ox + t.sizeX(s.rot) / 2.0, s.oz + t.sizeZ(s.rot) / 2.0};
+            out.add(Map.entry(at, s.ownerName + "'s ship"));
         }
         return out;
     }

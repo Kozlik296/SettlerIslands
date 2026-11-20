@@ -89,12 +89,14 @@ public final class Guide implements Listener, CommandExecutor {
                 "Alchemist.\nSells nether wart, glowstone, quartz, blaze powder, magma cream, golden apples.\n"
                         + "Buys logs, bread, gold, water buckets."));
         pages.add(page("Ships",
-                "Craft a Sloop:\n  3 white wool\n  log, chest, log\n  3 boats\n\nRight-click the water (also from a pier) to launch it. "
-                        + "Walk on deck, use its 3 chests.\nRight-click the helm to take the wheel: W sail, S stop, "
-                        + "A/D turn, sneak to leave."));
-        pages.add(page("Ships (2)",
-                "Everyone on deck moves with the ship.\n\nSneak + right-click the helm to pack it back into an item "
-                        + "(chests must be empty first).\n\nNo building on ships."));
+                "Craft a Sloop:\n  3 white wool\n  log, chest, log\n  3 boats\n\nRight-click the water (also from a pier) "
+                        + "to launch it. At anchor you walk on deck and use its chests."));
+        pages.add(page("Sailing",
+                "Right-click the helm to set sail. Everyone on deck sits down.\n\nW / S: faster / slower\nA / D: steer\n"
+                        + "Space: drop anchor (slow down first)\n\nWhile sailing, right-click a chest for the cargo."));
+        pages.add(page("Ships (3)",
+                "Sneak + right-click the helm at anchor to pack the ship into an item (empty the chests first).\n\n"
+                        + "No building on ships. Ships show on the map in the city hall."));
         pages.add(page("Prices",
                 "Pay and get paid in emeralds.\n\nEvery island has one price per trade, the same for everyone. "
                         + "Each time a trade is used there it gets a bit worse (up to 2x). It recovers by itself "
@@ -129,11 +131,14 @@ public final class Guide implements Listener, CommandExecutor {
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player p = event.getPlayer();
-        if (!(p.getWorld().getGenerator() instanceof IslandGenerator)) return;
+        // every player gets the book once, whatever world they join in (a second tick later, so it is not lost while joining)
         if (p.getPersistentDataContainer().has(gotKey, PersistentDataType.BYTE)) return;
-        p.getPersistentDataContainer().set(gotKey, PersistentDataType.BYTE, (byte) 1);
-        p.getInventory().addItem(book()).values().forEach(left -> p.getWorld().dropItem(p.getLocation(), left));
-        p.sendMessage(Component.text("Welcome, settler! Read the guide book in your inventory. (/guide for a new copy)", NamedTextColor.GOLD));
+        org.bukkit.Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (!p.isOnline()) return;
+            p.getPersistentDataContainer().set(gotKey, PersistentDataType.BYTE, (byte) 1);
+            p.getInventory().addItem(book()).values().forEach(left -> p.getWorld().dropItem(p.getLocation(), left));
+            p.sendMessage(Component.text("Welcome, settler! Read the guide book in your inventory. (/guide for a new copy)", NamedTextColor.GOLD));
+        }, 40L);
     }
 
     @Override
