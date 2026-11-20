@@ -105,6 +105,16 @@ public final class Settlement {
         };
     }
 
+    private String stairBlock() {
+        return switch (zone) {
+            case "nether" -> "polished_blackstone_brick_stairs";
+            case "sandbanks" -> "sandstone_stairs";
+            case "ironstone" -> "cobblestone_stairs";
+            case "highlands" -> "cobblestone_stairs";
+            default -> "spruce_stairs";
+        };
+    }
+
     private Material yardTop() {
         return switch (zone) {
             case "nether" -> Material.BLACKSTONE;
@@ -123,13 +133,20 @@ public final class Settlement {
         b.clearTrees(o[0] - 14, o[1] - 14, o[0] + sx + 14, o[1] + sz + 14);
         b.terraform(o[0], o[1], o[0] + sx - 1, o[1] + sz - 1, yardY, yardTop(), 12, 18);
         // path from the pier up to the front of the yard, blended in the same way
+        String landward = Math.abs(coast.dx()) > Math.abs(coast.dz()) ? (coast.dx() > 0 ? "west" : "east") : (coast.dz() > 0 ? "north" : "south");
+        int prev = Pier.DECK;
         for (int t = Pier.START; t >= frontT; t--) {
             int py = (int) Math.round(Pier.DECK + (yardY - Pier.DECK) * (double) (Pier.START - t) / (Pier.START - frontT));
+            boolean rise = py > prev;      // one block up from the cell before: make it a stair, no jumping
+            prev = py;
             for (int side = -1; side <= 1; side++) {
                 int x = coast.px(t, side), z = coast.pz(t, side);
                 if (!b.in(x, z)) continue;
                 b.foundation(x, z, py, Material.COBBLESTONE);
-                b.set(x, py, z, pathBlock(x, z));
+                if (rise) {
+                    b.set(x, py - 1, z, pathBlock(x, z));
+                    b.set(x, py, z, "minecraft:" + stairBlock() + "[facing=" + landward + ",half=bottom]");
+                } else b.set(x, py, z, pathBlock(x, z));
                 b.clear(x, z, py + 1, py + 5);
             }
         }

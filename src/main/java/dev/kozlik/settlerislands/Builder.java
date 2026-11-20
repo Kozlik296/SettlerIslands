@@ -63,7 +63,38 @@ public final class Builder {
         if (in(x, z) && y > minY && y < maxY) {
             region.setBlockData(x, y, z, data);
             if (data instanceof Fence || data instanceof Wall) connectables.add(new int[]{x, y, z});
+            if (data instanceof org.bukkit.block.data.type.Stairs st && st.getHalf() == org.bukkit.block.data.Bisected.Half.BOTTOM)
+                stairs.add(new int[]{x, y, z});
         }
+    }
+
+    // --------------------------------------------------------- smooth stair ends
+
+    private final List<int[]> stairs = new ArrayList<>();
+
+    /**
+     * Where a flight of stairs ends against a full block that is one step higher (a "wall" you would
+     * have to jump), that block becomes a stair too, so walking up or down is smooth all the way.
+     */
+    public void smoothStairs() {
+        java.util.ArrayDeque<int[]> todo = new java.util.ArrayDeque<>(stairs);
+        int budget = 4096;
+        while (!todo.isEmpty() && budget-- > 0) {
+            int[] p = todo.poll();
+            if (!region.isInRegion(p[0], p[1], p[2])) continue;
+            if (!(region.getBlockData(p[0], p[1], p[2]) instanceof org.bukkit.block.data.type.Stairs st)) continue;
+            if (st.getHalf() != org.bukkit.block.data.Bisected.Half.BOTTOM) continue;
+            BlockFace f = st.getFacing();
+            int bx = p[0] + f.getModX(), by = p[1] + 1, bz = p[2] + f.getModZ();
+            if (!region.isInRegion(bx, by + 1, bz)) continue;
+            Material back = region.getType(bx, by, bz);
+            if (!back.isOccluding() || !region.getType(bx, by + 1, bz).isAir()) continue;
+            org.bukkit.block.data.type.Stairs step = (org.bukkit.block.data.type.Stairs) st.clone();
+            step.setShape(org.bukkit.block.data.type.Stairs.Shape.STRAIGHT);
+            region.setBlockData(bx, by, bz, step);
+            todo.add(new int[]{bx, by, bz});
+        }
+        stairs.clear();
     }
 
     // --------------------------------------------------------- fence connections

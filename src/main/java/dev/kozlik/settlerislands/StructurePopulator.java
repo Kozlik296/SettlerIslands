@@ -20,5 +20,6 @@ public final class StructurePopulator extends BlockPopulator {
         for (Settlement st : plan.settlements) st.build(b);
         for (Pier p : plan.piers) p.build(b);
         b.connectAll();
+        b.smoothStairs();
     }
 }
