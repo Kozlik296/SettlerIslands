@@ -71,8 +71,9 @@ public final class Ships implements Listener {
     private static final String TEMPLATE = "ship_sloop";
     // the ship turns about this point (template coordinates, the middle of the deck)
     private static final double PIV_X = 3.5, PIV_Z = 7.0;
-    // seats while sailing (template coordinates): the captain at the stern behind the wheel, then the crew
-    private static final double[][] SEATS = {{3.5, 1.5}, {2.5, 6.5}, {4.5, 6.5}, {3.5, 11.5}};
+    // seats while sailing (template x, y of the bench block, z): the captain's bench on the raised stern deck,
+    // then the three crew benches near the bow
+    private static final double[][] SEATS = {{3.5, 4, 1.65}, {2.5, 3, 10.65}, {3.5, 3, 10.65}, {4.5, 3, 10.65}};
     // the seats are benches (stairs): sitting height above the deck
     private static final double SEAT_Y = 0.5;
     // edge points of the hull checked for collisions while sailing (template coordinates)
@@ -353,7 +354,7 @@ public final class Ships implements Listener {
         if (event.getAction() != Action.RIGHT_CLICK_AIR && event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
         Player p = event.getPlayer();
         if (event.getAction() == Action.RIGHT_CLICK_BLOCK && event.getClickedBlock() != null
-                && event.getClickedBlock().getBlockData() instanceof org.bukkit.block.data.type.Stairs && !p.isSneaking()) {
+                && event.getClickedBlock().getType() == Material.SPRUCE_STAIRS && !p.isSneaking()) {
             Ship s = shipAt(event.getClickedBlock());
             if (s != null && !s.sailing) {
                 event.setCancelled(true);
@@ -468,8 +469,8 @@ public final class Ships implements Listener {
             s.wheel.add(d);
         }
         for (double[] seat : SEATS) {
-            double[] p = at(piv[0], piv[1], s.yaw, seat[0], seat[1]);
-            org.bukkit.entity.ItemDisplay st = w.spawn(new Location(w, p[0], s.y + SEAT_Y, p[1], s.yaw, 0), org.bukkit.entity.ItemDisplay.class, e -> {
+            double[] p = at(piv[0], piv[1], s.yaw, seat[0], seat[2]);
+            org.bukkit.entity.ItemDisplay st = w.spawn(new Location(w, p[0], s.y - 2 + seat[1] + SEAT_Y, p[1], s.yaw, 0), org.bukkit.entity.ItemDisplay.class, e -> {
                 e.setPersistent(false);
                 e.setTeleportDuration(2);
             });
@@ -478,8 +479,8 @@ public final class Ships implements Listener {
         }
         org.bukkit.entity.Interaction click = w.spawn(new Location(w, piv[0], s.y - 1, piv[1]), org.bukkit.entity.Interaction.class, e -> {
             e.setPersistent(false);
-            e.setInteractionWidth(5f);
-            e.setInteractionHeight(2.5f);
+            e.setInteractionWidth(6f);
+            e.setInteractionHeight(4f);
             e.setResponsive(true);
         });
         s.interaction = click.getUniqueId();
@@ -496,11 +497,11 @@ public final class Ships implements Listener {
         captain.sendActionBar(Component.text("W / S: faster / slower   A / D: steer   Sneak: drop anchor", NamedTextColor.GOLD));
     }
 
-    // the wheel sits on the helm post (template 3.5, y 2.75, z 2.95), facing the captain
+    // the wheel sits on the helm post (template 3.5, y 4.75, z 2.95), facing the captain
     private static final int SPOKES = 4, RIM = 8;
 
     private static Transformation wheelPart(int part, float spinDeg, float shipYaw) {
-        Vector3f base = new Vector3f((float) (3.5 - PIV_X), 0.75f, (float) (2.95 - PIV_Z));
+        Vector3f base = new Vector3f((float) (3.5 - PIV_X), 2.75f, (float) (2.95 - PIV_Z));
         float spin = (float) Math.toRadians(spinDeg);
         Vector3f tr, scale;
         Quaternionf q;
@@ -540,7 +541,7 @@ public final class Ships implements Listener {
             double[] p = at(px, pz, yaw, h[0], h[1]);
             int bx = (int) Math.floor(p[0]), bz = (int) Math.floor(p[1]);
             if (!w.isChunkLoaded(bx >> 4, bz >> 4)) return false;
-            for (int y = waterTop - 1; y <= waterTop + 1; y++) {
+            for (int y = waterTop - 1; y <= waterTop + 2; y++) {
                 Block b = w.getBlockAt(bx, y, bz);
                 if (index.containsKey(key(w.getName(), bx, y, bz))) return false;
                 if (!freeForHull(b, waterTop) && !b.getType().isAir()) return false;
@@ -576,8 +577,8 @@ public final class Ships implements Listener {
         // the crew stands on the deck again, each where they sat
         for (int i = 0; i < riders.size(); i++) {
             double[] seat = SEATS[Math.min(i, SEATS.length - 1)];
-            double[] p = point(s.ox, s.oz, s.rot, seat[0], seat[1]);
-            riders.get(i).teleport(new Location(w, p[0], s.oy + 2 + SEAT_Y, p[1], s.rot * 90f, 0));
+            double[] p = point(s.ox, s.oz, s.rot, seat[0], seat[2]);
+            riders.get(i).teleport(new Location(w, p[0], s.oy + seat[1] + SEAT_Y + 0.05, p[1], s.rot * 90f, 0));
         }
         save();
         return true;
@@ -651,8 +652,8 @@ public final class Ships implements Listener {
             // move the model and the seats
             root.teleport(new Location(w, s.lastX, s.y, s.lastZ), io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
             for (int i = 0; i < s.seats.size(); i++) {
-                double[] p = at(s.lastX, s.lastZ, s.yaw, SEATS[i][0], SEATS[i][1]);
-                s.seats.get(i).teleport(new Location(w, p[0], s.y + SEAT_Y, p[1], s.yaw, 0), io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
+                double[] p = at(s.lastX, s.lastZ, s.yaw, SEATS[i][0], SEATS[i][2]);
+                s.seats.get(i).teleport(new Location(w, p[0], s.y - 2 + SEATS[i][1] + SEAT_Y, p[1], s.yaw, 0), io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
             }
             Entity click = s.interaction == null ? null : Bukkit.getEntity(s.interaction);
             if (click != null) click.teleport(new Location(w, s.lastX, s.y - 1, s.lastZ));
