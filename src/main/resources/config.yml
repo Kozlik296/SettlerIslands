@@ -44,6 +44,13 @@ rules:
   support-reach: 8
   # food spoils after this many hours of the carrying player's online time (chests keep food fresh)
   spoil-hours: 12
+  # carrying weight: each inventory slot counts as the part of a full stack it holds (a tool or
+  # a full stack = 1); the first free-stacks cost nothing, every stack above slows walking by
+  # per-stack (0.025 = 2.5%), up to max (0.5 = half speed). per-stack: 0 turns it off.
+  weight:
+    free-stacks: 12
+    per-stack: 0.025
+    max: 0.5
   # crops and breeding on Meadow are this many times faster
   meadow-growth: 2
   # banned: elytra flight, ender chests, shulker boxes, Nether/End portals,

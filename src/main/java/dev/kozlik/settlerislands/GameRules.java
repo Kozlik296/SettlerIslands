@@ -56,6 +56,53 @@ public final class GameRules implements Listener {
         this.freshKey = new NamespacedKey(plugin, "fresh_hours");
         this.onlineKey = new NamespacedKey(plugin, "online_minutes");
         Bukkit.getScheduler().runTaskTimer(plugin, this::minute, 1200L, 1200L);
+        this.weightKey = new NamespacedKey(plugin, "carry_weight");
+        Bukkit.getScheduler().runTaskTimer(plugin, this::weight, 40L, 10L);
+    }
+
+    // ================================================================ carrying weight
+
+    private final NamespacedKey weightKey;
+    private final java.util.Map<java.util.UUID, Integer> lastTier = new java.util.HashMap<>();
+
+    /**
+     * The fuller your inventory, the slower you walk. Every slot counts as much of a full stack as
+     * it holds (16 of 64 cobblestone = a quarter, one sword = a whole stack); the first 'free-stacks'
+     * cost nothing, each one above that slows you by 'per-stack', up to 'max'.
+     */
+    private void weight() {
+        double free = plugin.getConfig().getDouble("rules.weight.free-stacks", 12);
+        double per = plugin.getConfig().getDouble("rules.weight.per-stack", 0.025);
+        double max = plugin.getConfig().getDouble("rules.weight.max", 0.5);
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            org.bukkit.attribute.AttributeInstance speed = p.getAttribute(org.bukkit.attribute.Attribute.MOVEMENT_SPEED);
+            if (speed == null) continue;
+            double slow = 0;
+            boolean counts = island(p.getWorld()) && per > 0
+                    && (p.getGameMode() == org.bukkit.GameMode.SURVIVAL || p.getGameMode() == org.bukkit.GameMode.ADVENTURE);
+            if (counts) {
+                double load = 0;
+                PlayerInventory inv = p.getInventory();
+                for (ItemStack it : inv.getStorageContents()) if (it != null && !it.getType().isAir()) load += it.getAmount() / (double) it.getMaxStackSize();
+                ItemStack off = inv.getItemInOffHand();
+                if (!off.getType().isAir()) load += off.getAmount() / (double) off.getMaxStackSize();
+                slow = Math.min(max, Math.max(0, load - free) * per);
+            }
+            org.bukkit.attribute.AttributeModifier old = speed.getModifier(weightKey);
+            double current = old == null ? 0 : -old.getAmount();
+            if (Math.abs(current - slow) < 0.005) continue;
+            if (old != null) speed.removeModifier(weightKey);
+            if (slow > 0) {
+                speed.addTransientModifier(new org.bukkit.attribute.AttributeModifier(weightKey, -slow,
+                        org.bukkit.attribute.AttributeModifier.Operation.MULTIPLY_SCALAR_1, org.bukkit.inventory.EquipmentSlotGroup.ANY));
+            }
+            int tier = slow <= 0 ? 0 : slow < max * 0.4 ? 1 : slow < max * 0.8 ? 2 : 3;
+            Integer was = lastTier.put(p.getUniqueId(), tier);
+            if (was != null && was != tier && tier > 0) {
+                String[] words = {"", "Your pack is getting heavy", "Your pack is heavy - you walk slowly", "You are overloaded"};
+                p.sendActionBar(Component.text(words[tier] + " (" + Math.round(slow * 100) + "% slower)", NamedTextColor.GOLD));
+            }
+        }
     }
 
     private static boolean island(World w) {
