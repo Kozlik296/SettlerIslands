@@ -167,7 +167,7 @@ public final class Village {
                 for (int side : new int[]{-1, 1}) {
                     if (rnd.nextDouble() < 0.04) continue;
                     double nx = -Math.sin(p[2]) * side, nz = Math.cos(p[2]) * side;   // away from the road
-                    double gap = half + 2 + rnd.nextInt(2);
+                    double gap = half + 3 + rnd.nextInt(2);   // the lot (with its 1-block margin) must stay clear of the road
                     int frontX = (int) Math.round(p[0] + nx * gap), frontZ = (int) Math.round(p[1] + nz * gap);
                     Lot first = tryLot(m, rnd, boxes, counters, frontX, frontZ, nx, nz, centre, true);
                     if (first == null || !first.house()) continue;
@@ -188,6 +188,15 @@ public final class Village {
             Lot l = lots.get(i);
             if (l.house()) lots.set(i, withPath(l, route(l, blocked)));
         }
+        // no street lamps inside buildings or the city hall
+        lamps.removeIf(l -> {
+            for (int[] bx : boxes.subList(1, boxes.size()))
+                if (l[0] >= bx[0] && l[0] <= bx[2] && l[1] >= bx[1] && l[1] <= bx[3]) return true;
+            return false;
+        });
+        long houses = lots.stream().filter(Lot::house).count();
+        org.bukkit.Bukkit.getLogger().info("[SettlerIslands] Village planned: " + houses + " houses, "
+                + (lots.size() - houses) + " fields and pens, " + mains.size() + " roads, " + lanes.size() + " lanes");
     }
 
     private static Lot withPath(Lot l, List<Long> path) {

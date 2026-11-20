@@ -11,7 +11,6 @@ import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.Ageable;
 import org.bukkit.entity.Animals;
-import org.bukkit.entity.EnderPearl;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -24,7 +23,6 @@ import org.bukkit.event.block.EntityBlockFormEvent;
 import org.bukkit.event.entity.EntityBreedEvent;
 import org.bukkit.event.entity.EntityPortalEvent;
 import org.bukkit.event.entity.EntityToggleGlideEvent;
-import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.inventory.PrepareItemCraftEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
@@ -86,14 +84,6 @@ public final class GameRules implements Listener {
     public void onUse(PlayerInteractEvent event) {
         if (!bans() || !island(event.getPlayer().getWorld())) return;
         Player p = event.getPlayer();
-        if (event.getAction() == Action.RIGHT_CLICK_AIR || event.getAction() == Action.RIGHT_CLICK_BLOCK) {
-            ItemStack item = event.getItem();
-            if (item != null && item.getType() == Material.ENDER_PEARL) {
-                event.setCancelled(true);
-                deny(p, "Ender pearls are banned");
-                return;
-            }
-        }
         if (event.getAction() == Action.RIGHT_CLICK_BLOCK && event.getClickedBlock() != null) {
             Material m = event.getClickedBlock().getType();
             if (m == Material.ENDER_CHEST || Tag.SHULKER_BOXES.isTagged(m)) {
@@ -101,11 +91,6 @@ public final class GameRules implements Listener {
                 deny(p, "Ender chests and shulker boxes are banned");
             }
         }
-    }
-
-    @EventHandler(ignoreCancelled = true)
-    public void onPearl(ProjectileLaunchEvent event) {
-        if (event.getEntity() instanceof EnderPearl && bans() && island(event.getEntity().getWorld())) event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -164,7 +149,7 @@ public final class GameRules implements Listener {
     public void onTeleport(PlayerTeleportEvent event) {
         if (!bans() || !island(event.getFrom().getWorld())) return;
         String cause = event.getCause().name();
-        if (cause.equals("CHORUS_FRUIT") || cause.equals("CONSUMABLE_EFFECT") || cause.equals("ENDER_PEARL")) {
+        if (cause.equals("CHORUS_FRUIT") || cause.equals("CONSUMABLE_EFFECT")) {
             event.setCancelled(true);
         }
     }

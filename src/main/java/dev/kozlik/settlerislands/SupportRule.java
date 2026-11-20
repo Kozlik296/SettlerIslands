@@ -2,7 +2,6 @@ package dev.kozlik.settlerislands;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
-import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -28,7 +27,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The support rule: a placed block must be within 'span' blocks (sideways) of something that
+ * The support rule (also in creative): a placed block must be within 'reach' blocks (sideways) of something that
  * stands on the ground, counting along the blocks it is connected to. Going up or down through
  * connected blocks is free, so walls, pillars and towers are fine; only long overhangs and
  * bridges without pillars fail. An unsupported block falls down like sand. When a placed block
@@ -49,7 +48,7 @@ public final class SupportRule implements Listener {
     }
 
     private int span() {
-        return plugin.getConfig().getInt("rules.support-span", 10);
+        return plugin.getConfig().getInt("rules.support-reach", 8);
     }
 
     private static boolean island(World w) {
@@ -191,7 +190,6 @@ public final class SupportRule implements Listener {
         Block b = event.getBlockPlaced();
         if (!island(b.getWorld()) || !applies(b.getType())) return;
         mark(b, true);
-        if (event.getPlayer().getGameMode() == GameMode.CREATIVE) return;
         Material type = b.getType();
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (b.getType() != type || supported(b)) return;

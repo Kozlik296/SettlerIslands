@@ -140,6 +140,7 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
             sender.sendMessage("/si tp <island|zone> - go to an island (meadow, ironstone, islet3, nether...)");
             sender.sendMessage("/si tp village|fortress|harbour - go to a structure");
             sender.sendMessage("/si tp settlement <timberlands|sandbanks|ironstone|highlands|nether> - go to a settlement");
+            sender.sendMessage("/si mapwall - hang the 9 world maps in the city hall again");
             sender.sendMessage("/si retrade - give the settlement villager you look at its trades from trades.yml again");
             sender.sendMessage("/si where - show the zone and biome you stand in");
             sender.sendMessage("/si stats - land per zone and planned ore totals");
@@ -244,6 +245,21 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
                     }
                     sender.sendMessage(sb.toString());
                 }
+            }
+            case "mapwall" -> {
+                if (!(sender instanceof Player p) || !(p.getWorld().getGenerator() instanceof IslandGenerator)) return true;
+                StructurePlan plan = StructurePlan.get(WorldModel.get(p.getWorld().getSeed()), p.getWorld().getSeed());
+                int ok = 0;
+                for (StructurePlan.Task t : plan.tasks) {
+                    if (!(t instanceof StructurePlan.MapFrame f)) continue;
+                    try {
+                        setup.spawnMapFrame(p.getWorld(), f);
+                        ok++;
+                    } catch (RuntimeException e) {
+                        sender.sendMessage("Map " + f.col() + "," + f.row() + " at " + f.x() + " " + f.y() + " " + f.z() + " failed: " + e.getMessage());
+                    }
+                }
+                sender.sendMessage("Hung " + ok + " of 9 maps in the city hall.");
             }
             case "retrade" -> {
                 if (!(sender instanceof Player p)) return true;

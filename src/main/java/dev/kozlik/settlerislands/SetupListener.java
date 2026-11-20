@@ -82,6 +82,25 @@ public final class SetupListener implements Listener {
         if (fixed(event.getEntity())) event.setCancelled(true);
     }
 
+    /** Hangs one map of the world map wall (replacing a frame that is already there). */
+    public void spawnMapFrame(World world, StructurePlan.MapFrame f) {
+        org.bukkit.block.BlockFace face = f.fx() > 0 ? org.bukkit.block.BlockFace.EAST : f.fx() < 0 ? org.bukkit.block.BlockFace.WEST
+                : f.fz() > 0 ? org.bukkit.block.BlockFace.SOUTH : org.bukkit.block.BlockFace.NORTH;
+        Location loc = new Location(world, f.x() + 0.5, f.y() + 0.5, f.z() + 0.5);
+        for (org.bukkit.entity.Entity e : world.getNearbyEntities(loc, 0.6, 0.6, 0.6)) {
+            if (e instanceof org.bukkit.entity.ItemFrame) e.remove();
+        }
+        world.getBlockAt(f.x(), f.y(), f.z()).setType(org.bukkit.Material.AIR, false);
+        org.bukkit.inventory.ItemStack map = plugin.worldMap().item(world, f.col(), f.row());
+        world.spawn(loc, org.bukkit.entity.GlowItemFrame.class, frame -> {
+            frame.setFacingDirection(face, true);
+            frame.setItem(map, false);
+            frame.setFixed(true);
+            frame.setInvulnerable(true);
+            frame.setVisible(false);
+        });
+    }
+
     private void run(World world, StructurePlan.Task task) {
         switch (task) {
             case StructurePlan.SpawnVillager v -> {
@@ -101,19 +120,7 @@ public final class SetupListener implements Listener {
                     }
                 });
             }
-            case StructurePlan.MapFrame f -> {
-                org.bukkit.block.BlockFace face = f.fx() > 0 ? org.bukkit.block.BlockFace.EAST : f.fx() < 0 ? org.bukkit.block.BlockFace.WEST
-                        : f.fz() > 0 ? org.bukkit.block.BlockFace.SOUTH : org.bukkit.block.BlockFace.NORTH;
-                Location loc = new Location(world, f.x() + 0.5, f.y() + 0.5, f.z() + 0.5);
-                org.bukkit.inventory.ItemStack map = plugin.worldMap().item(world, f.col(), f.row());
-                world.spawn(loc, org.bukkit.entity.GlowItemFrame.class, frame -> {
-                    frame.setFacingDirection(face, true);
-                    frame.setItem(map, false);
-                    frame.setFixed(true);
-                    frame.setInvulnerable(true);
-                    frame.setVisible(false);
-                });
-            }
+            case StructurePlan.MapFrame f -> spawnMapFrame(world, f);
             case StructurePlan.SpawnEntity e -> world.spawnEntity(new Location(world, e.x() + 0.5, e.y(), e.z() + 0.5), e.type());
             case StructurePlan.SetSpawner s -> {
                 Block block = world.getBlockAt(s.x(), s.y(), s.z());
