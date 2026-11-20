@@ -82,23 +82,26 @@ public final class SetupListener implements Listener {
         if (fixed(event.getEntity())) event.setCancelled(true);
     }
 
-    /** Hangs one map of the world map wall (replacing a frame that is already there). */
+    /**
+     * Hangs one map of the world map wall (replacing a frame already in that spot). The frame is
+     * summoned like the /summon command does, which places it exactly where asked (spawning it
+     * through the API refuses frames right next to each other).
+     */
     public void spawnMapFrame(World world, StructurePlan.MapFrame f) {
-        org.bukkit.block.BlockFace face = f.fx() > 0 ? org.bukkit.block.BlockFace.EAST : f.fx() < 0 ? org.bukkit.block.BlockFace.WEST
-                : f.fz() > 0 ? org.bukkit.block.BlockFace.SOUTH : org.bukkit.block.BlockFace.NORTH;
-        Location loc = new Location(world, f.x() + 0.5, f.y() + 0.5, f.z() + 0.5);
-        for (org.bukkit.entity.Entity e : world.getNearbyEntities(loc, 0.6, 0.6, 0.6)) {
-            if (e instanceof org.bukkit.entity.ItemFrame) e.remove();
+        org.bukkit.block.Block block = world.getBlockAt(f.x(), f.y(), f.z());
+        for (org.bukkit.entity.Entity e : world.getNearbyEntities(block.getLocation().add(0.5, 0.5, 0.5), 1.5, 1.5, 1.5)) {
+            if (e instanceof org.bukkit.entity.ItemFrame && e.getLocation().getBlock().equals(block)) e.remove();
         }
-        world.getBlockAt(f.x(), f.y(), f.z()).setType(org.bukkit.Material.AIR, false);
         org.bukkit.inventory.ItemStack map = plugin.worldMap().item(world, f.col(), f.row());
-        world.spawn(loc, org.bukkit.entity.GlowItemFrame.class, frame -> {
-            frame.setFacingDirection(face, true);
-            frame.setItem(map, false);
-            frame.setFixed(true);
-            frame.setInvulnerable(true);
-            frame.setVisible(false);
-        });
+        int id = ((org.bukkit.inventory.meta.MapMeta) map.getItemMeta()).getMapView().getId();
+        int facing = f.fx() > 0 ? 5 : f.fx() < 0 ? 4 : f.fz() > 0 ? 3 : 2;   // east, west, south, north
+        String cmd = "execute in " + world.getKey().asString() + " run summon minecraft:glow_item_frame "
+                + f.x() + " " + f.y() + " " + f.z()
+                + " {Facing:" + facing + "b,Fixed:1b,Invisible:1b,Invulnerable:1b,"
+                + "Item:{id:\"minecraft:filled_map\",count:1,components:{\"minecraft:map_id\":" + id + "}}}";
+        if (!Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd)) {
+            throw new IllegalStateException("summon failed: " + cmd);
+        }
     }
 
     private void run(World world, StructurePlan.Task task) {

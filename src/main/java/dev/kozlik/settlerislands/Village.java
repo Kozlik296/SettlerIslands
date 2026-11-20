@@ -22,7 +22,7 @@ import java.util.Random;
  */
 public final class Village {
 
-    private static final int RADIUS = 175;         // nothing is built further from the square
+    private static final int RADIUS = 125;         // nothing is built further from the square
     private static final int SQUARE = 17;          // radius of the square
 
     /** A kind of building: template, door column, front row (porch), inside spawn row, villagers. */
@@ -122,17 +122,17 @@ public final class Village {
             double heading = headings[i];
             boolean harbour = i == harbourSlot;
             List<double[]> road = grow(m, rnd, cx + Math.cos(heading) * (SQUARE - 1), cz + Math.sin(heading) * (SQUARE - 1), heading,
-                    harbour ? 400 : 100 + rnd.nextInt(55), harbour);
+                    harbour ? 400 : 75 + rnd.nextInt(40), harbour);
             mains.add(road);
             rasterize(road, 2);
         }
         List<List<double[]>> lanes = new ArrayList<>();
         for (List<double[]> road : mains) {
-            for (int k = 22; k < road.size() - 12; k += 22 + rnd.nextInt(14)) {
-                if (rnd.nextDouble() < 0.2) continue;
+            for (int k = 14; k < road.size() - 8; k += 14 + rnd.nextInt(8)) {
+                if (rnd.nextDouble() < 0.1) continue;
                 double[] p = road.get(k);
                 double h = p[2] + (rnd.nextBoolean() ? 1 : -1) * Math.toRadians(65 + rnd.nextInt(40));
-                List<double[]> lane = grow(m, rnd, p[0], p[1], h, 35 + rnd.nextInt(45), false);
+                List<double[]> lane = grow(m, rnd, p[0], p[1], h, 25 + rnd.nextInt(35), false);
                 if (lane.size() < 15) continue;
                 lanes.add(lane);
                 rasterize(lane, 1);
@@ -174,10 +174,28 @@ public final class Village {
                     // a second row behind the first, reached by a path round the side
                     int depth = first.fx != 0 ? first.sx : first.sz;
                     int bx = (int) Math.round(frontX + nx * (depth + 4)), bz = (int) Math.round(frontZ + nz * (depth + 4));
-                    if (rnd.nextDouble() < 0.75) tryLot(m, rnd, boxes, counters, bx, bz, nx, nz, centre, false);
+                    tryLot(m, rnd, boxes, counters, bx, bz, nx, nz, centre, false);
                 }
                 k += centre ? 7 + rnd.nextInt(3) : 9 + rnd.nextInt(4);
             }
+        }
+        // fill the spaces between the streets: every free spot near the centre gets a house that
+        // faces the nearest street (its path is routed to the street below)
+        List<int[]> spots = new ArrayList<>();
+        for (int gx = -RADIUS; gx <= RADIUS; gx += 5)
+            for (int gz = -RADIUS; gz <= RADIUS; gz += 5)
+                if (gx * gx + gz * gz <= (RADIUS - 10) * (RADIUS - 10)) spots.add(new int[]{cx + gx, cz + gz});
+        spots.sort((a, b) -> Double.compare(Math.hypot(a[0] - cx, a[1] - cz), Math.hypot(b[0] - cx, b[1] - cz)));
+        for (int[] sp : spots) {
+            int[] road = nearestRoad(sp[0], sp[1], 22);
+            if (road == null) continue;
+            double dx = sp[0] - road[0], dz = sp[1] - road[1];
+            double nx = 0, nz = 0;                  // away from the street, on an axis
+            if (Math.abs(dx) > Math.abs(dz)) nx = Math.signum(dx);
+            else nz = Math.signum(dz);
+            if (nx == 0 && nz == 0) continue;
+            boolean centre = Math.hypot(sp[0] - cx, sp[1] - cz) < 70;
+            tryLot(m, rnd, boxes, counters, sp[0], sp[1], nx, nz, centre, false);
         }
         // paths from every door to the nearest road, walking round other buildings
         Set<Long> blocked = new HashSet<>();
@@ -363,6 +381,21 @@ public final class Village {
             for (int z = box[1]; z <= box[3]; z++)
                 if (roadCells.containsKey(key(x, z))) return true;
         return false;
+    }
+
+    /** The closest road cell within r (square search), or null. */
+    private int[] nearestRoad(int x, int z, int r) {
+        int[] best = null;
+        int bestD = Integer.MAX_VALUE;
+        for (int dx = -r; dx <= r; dx++)
+            for (int dz = -r; dz <= r; dz++) {
+                int d = dx * dx + dz * dz;
+                if (d < bestD && roadCells.containsKey(key(x + dx, z + dz))) {
+                    bestD = d;
+                    best = new int[]{x + dx, z + dz};
+                }
+            }
+        return best;
     }
 
     /** True if any road cell lies within r of the point (roads entering the square). */
