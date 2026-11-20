@@ -59,35 +59,40 @@ import java.util.UUID;
 
 /**
  * Sailing ships. At anchor a ship is real blocks: you walk on its deck and use its chests. When the
- * captain takes the helm the ship becomes a model riding an ordinary boat, so it sails exactly like a
- * boat (smooth, any direction, WASD): the captain and one passenger travel seated. Sneaking drops
- * anchor: the ship turns back into blocks where it is, with everything in its chests.
+ * captain takes the helm the ship becomes a smoothly moving model with boat-like handling (W/S speed,
+ * A/D steer at any angle, the wheel turns). Everyone on deck sits down on a seat and travels along;
+ * others can board by right-clicking the ship. The captain sneaking drops anchor: the ship turns back
+ * into blocks where it is, with everything in its chests, and the crew stands on its deck.
  * A crafted "Sloop" item placed on water (also beside a pier) launches a ship; sneak + right-click
  * the helm at anchor (owner, empty chests) packs it up again. Ships show on the world map.
  */
 public final class Ships implements Listener {
 
     private static final String TEMPLATE = "ship_sloop";
-    // where the captain sits, in template coordinates (between the chests at the stern)
-    private static final double SEAT_X = 3.5, SEAT_Z = 1.5;
-    // the boat is a little behind the captain: a boat's driver sits 0.2 forward of its middle
-    private static final double BOAT_X = 3.5, BOAT_Z = SEAT_Z - 0.2;
-    // display passengers ride 0.1875 above the boat and 0.6 behind its middle
-    private static final double RIDE_Y = 0.1875, RIDE_BACK = 0.6;
-    // while sailing, the deck (template layer 1) starts this far below the boat, so the deck top is at seat height
-    private static final double DECK_BELOW = 0.45;
+    // the ship turns about this point (template coordinates, the middle of the deck)
+    private static final double PIV_X = 3.5, PIV_Z = 7.0;
+    // seats while sailing (template coordinates): the captain at the stern behind the wheel, then the crew
+    private static final double[][] SEATS = {{3.5, 1.5}, {2.5, 6.5}, {4.5, 6.5}, {3.5, 11.0}};
+    // edge points of the hull checked for collisions while sailing (template coordinates)
+    private static final double[][] HULL = {{3.5, 13.7}, {1.3, 11.6}, {5.7, 11.6}, {0.2, 9}, {6.8, 9}, {0.2, 5}, {6.8, 5},
+            {0.2, 1}, {6.8, 1}, {3.5, 0.2}};
+    private static final double MAX_SPEED = 0.30, ACCEL = 0.006, BRAKE = 0.012, MAX_BACK = -0.06;
 
     private static final class Ship {
         final UUID id, owner;
         final String ownerName, world;
         int ox, oy, oz, rot;                 // pose at anchor (oy = keel layer = water surface - 1)
         boolean sailing;
-        UUID boat, captain;
+        UUID root, interaction, captain;
         final List<UUID> parts = new ArrayList<>();
-        final List<UUID> wheel = new ArrayList<>();
+        final List<BlockDisplay> partList = new ArrayList<>();
+        final List<Vector3f> partPos = new ArrayList<>();
+        final List<BlockDisplay> wheel = new ArrayList<>();
+        final List<org.bukkit.entity.ItemDisplay> seats = new ArrayList<>();
         Map<Integer, ItemStack[]> cargo = new HashMap<>();
-        float wheelAngle;
-        double lastX, lastZ;
+        float wheelAngle, yaw, shownYaw;
+        double lastX, lastZ, y, speed;
+        boolean anchoring;
 
         Ship(UUID id, UUID owner, String ownerName, String world, int ox, int oy, int oz, int rot) {
             this.id = id;
@@ -102,7 +107,7 @@ public final class Ships implements Listener {
     }
 
     private final SettlerIslands plugin;
-    private final NamespacedKey itemKey, recipeKey, boatKey;
+    private final NamespacedKey itemKey, recipeKey;
     private final File file;
     private final Map<UUID, Ship> ships = new HashMap<>();
     private final Map<Long, UUID> index = new HashMap<>();     // block position -> anchored ship
@@ -112,7 +117,6 @@ public final class Ships implements Listener {
         this.plugin = plugin;
         this.itemKey = new NamespacedKey(plugin, "ship_item");
         this.recipeKey = new NamespacedKey(plugin, "sloop");
-        this.boatKey = new NamespacedKey(plugin, "ship_boat");
         this.file = new File(plugin.getDataFolder(), "ships.yml");
         addRecipe();
         Bukkit.getScheduler().runTask(plugin, this::load);
@@ -354,117 +358,168 @@ public final class Ships implements Listener {
         p.sendMessage(Component.text("Ship launched! Right-click the helm to set sail; sneak to drop anchor.", NamedTextColor.GREEN));
     }
 
-    /** At anchor -> sailing: the blocks become a model on a boat, the captain takes the helm. */
+    /** Template point (fractions allowed) at a free pose: pivot at (px, pz), heading yaw (degrees). */
+    private static double[] at(double px, double pz, float yaw, double tx, double tz) {
+        double th = Math.toRadians(yaw), lx = tx - PIV_X, lz = tz - PIV_Z;
+        return new double[]{px + lx * Math.cos(th) - lz * Math.sin(th), pz + lx * Math.sin(th) + lz * Math.cos(th)};
+    }
+
+    private static Quaternionf turnQ(float yaw) {
+        return new Quaternionf().rotationY((float) -Math.toRadians(yaw));
+    }
+
+    /** At anchor -> sailing: the blocks become a model, everyone on deck takes a seat. */
     private void setSail(Player captain, Ship s) {
         World w = Bukkit.getWorld(s.world);
         if (w == null || s.sailing) return;
-        // one passenger can come along: the nearest other player on deck
-        Player mate = null;
-        double best = 99;
-        for (Entity e : w.getNearbyEntities(box(s))) {
-            if (e instanceof Player other && !other.equals(captain) && other.getVehicle() == null) {
-                double d = other.getLocation().distanceSquared(captain.getLocation());
-                if (d < best) {
-                    best = d;
-                    mate = other;
-                }
-            }
+        List<Player> crew = new ArrayList<>();
+        for (Entity e : w.getNearbyEntities(box(s).expand(0.5))) {
+            if (e instanceof Player other && !other.equals(captain) && other.getVehicle() == null) crew.add(other);
         }
-        float yaw = s.rot * 90f;
-        double[] bp = point(s.ox, s.oz, s.rot, BOAT_X, BOAT_Z);
-        Location boatLoc = new Location(w, bp[0], s.oy + 1.9, bp[1], yaw, 0);
+        double[] piv = point(s.ox, s.oz, s.rot, PIV_X, PIV_Z);
+        s.yaw = s.rot * 90f;
+        s.shownYaw = s.yaw;
+        s.y = s.oy + 2;                       // the deck top
+        s.lastX = piv[0];
+        s.lastZ = piv[1];
+        s.speed = 0;
         indexShip(s, false);
         clear(w, s);
-        Entity boat = w.spawnEntity(boatLoc, EntityType.OAK_BOAT);
-        boat.setInvulnerable(true);
-        boat.setPersistent(false);
-        boat.getPersistentDataContainer().set(boatKey, PersistentDataType.STRING, s.id.toString());
-        boat.addPassenger(captain);                 // the driver has to be the first passenger
-        if (mate != null) boat.addPassenger(mate);
-        s.boat = boat.getUniqueId();
-        s.captain = captain.getUniqueId();
-        s.sailing = true;
-        s.lastX = bp[0];
-        s.lastZ = bp[1];
-        spawnModel(w, s, boat, boatLoc);
-        save();
-        captain.sendActionBar(Component.text("Sails up! Steer with W A S D like a boat. Sneak to drop anchor.", NamedTextColor.GOLD));
-    }
-
-    /** The ship's blocks as displays riding the boat, plus the wheel. */
-    private void spawnModel(World w, Ship s, Entity boat, Location at) {
+        Location base = new Location(w, piv[0], s.y, piv[1]);
+        org.bukkit.entity.ItemDisplay root = w.spawn(base, org.bukkit.entity.ItemDisplay.class, e -> {
+            e.setPersistent(false);
+            e.setTeleportDuration(2);
+        });
+        s.root = root.getUniqueId();
         Template t = tp();
+        Quaternionf q = turnQ(s.yaw);
         for (int y = 0; y < t.h; y++)
             for (int z = 0; z < t.d; z++)
                 for (int x = 0; x < t.w; x++) {
                     int idx = t.paletteIndex(x, y, z);
                     if (idx < 2) continue;
                     BlockData data = t.data(idx, 0);
-                    Vector3f tr = new Vector3f((float) (x - BOAT_X), (float) (y - 1 - DECK_BELOW - RIDE_Y), (float) (z - BOAT_Z + RIDE_BACK));
-                    BlockDisplay d = w.spawn(at, BlockDisplay.class, e -> {
+                    Vector3f local = new Vector3f((float) (x - PIV_X), y - 2, (float) (z - PIV_Z));
+                    BlockDisplay d = w.spawn(base, BlockDisplay.class, e -> {
                         e.setBlock(data);
                         e.setPersistent(false);
-                        e.setTransformation(new Transformation(tr, new Quaternionf(), new Vector3f(1, 1, 1), new Quaternionf()));
+                        e.setTransformation(new Transformation(q.transform(new Vector3f(local)), new Quaternionf(q), new Vector3f(1, 1, 1), new Quaternionf()));
                     });
-                    boat.addPassenger(d);
+                    root.addPassenger(d);
                     s.parts.add(d.getUniqueId());
+                    s.partList.add(d);
+                    s.partPos.add(local);
                 }
         for (int i = 0; i < 1 + SPOKES + RIM; i++) {
             int part = i;
-            BlockDisplay d = w.spawn(at, BlockDisplay.class, e -> {
+            BlockDisplay d = w.spawn(base, BlockDisplay.class, e -> {
                 e.setBlock(Bukkit.createBlockData(part == 0 ? Material.DARK_OAK_PLANKS : part <= SPOKES ? Material.STRIPPED_SPRUCE_LOG : Material.SPRUCE_PLANKS));
                 e.setPersistent(false);
-                e.setTransformation(wheelPart(part, s.wheelAngle));
+                e.setTransformation(wheelPart(part, s.wheelAngle, s.yaw));
             });
-            boat.addPassenger(d);
+            root.addPassenger(d);
             s.parts.add(d.getUniqueId());
-            s.wheel.add(d.getUniqueId());
+            s.wheel.add(d);
         }
+        for (double[] seat : SEATS) {
+            double[] p = at(piv[0], piv[1], s.yaw, seat[0], seat[1]);
+            org.bukkit.entity.ItemDisplay st = w.spawn(new Location(w, p[0], s.y, p[1], s.yaw, 0), org.bukkit.entity.ItemDisplay.class, e -> {
+                e.setPersistent(false);
+                e.setTeleportDuration(2);
+            });
+            s.seats.add(st);
+            s.parts.add(st.getUniqueId());
+        }
+        org.bukkit.entity.Interaction click = w.spawn(new Location(w, piv[0], s.y - 1, piv[1]), org.bukkit.entity.Interaction.class, e -> {
+            e.setPersistent(false);
+            e.setInteractionWidth(5f);
+            e.setInteractionHeight(2.5f);
+            e.setResponsive(true);
+        });
+        s.interaction = click.getUniqueId();
+        s.parts.add(click.getUniqueId());
+        s.captain = captain.getUniqueId();
+        s.sailing = true;
+        s.seats.get(0).addPassenger(captain);
+        int seat = 1;
+        for (Player p : crew) {
+            if (seat < s.seats.size()) s.seats.get(seat++).addPassenger(p);
+            else p.sendActionBar(Component.text("The ship is full - you stayed behind.", NamedTextColor.RED));
+        }
+        save();
+        captain.sendActionBar(Component.text("W / S: faster / slower   A / D: steer   Sneak: drop anchor", NamedTextColor.GOLD));
     }
 
-    // the wheel sits on the helm post (template 3.5, 3.4, 2.95), facing the captain
+    // the wheel sits on the helm post (template 3.5, y 2.75, z 2.95), facing the captain
     private static final int SPOKES = 4, RIM = 8;
 
-    private static Transformation wheelPart(int part, float spinDeg) {
-        Vector3f base = new Vector3f((float) (3.5 - BOAT_X), (float) (3.4 - 1 - DECK_BELOW - RIDE_Y), (float) (2.95 - BOAT_Z + RIDE_BACK));
+    private static Transformation wheelPart(int part, float spinDeg, float shipYaw) {
+        Vector3f base = new Vector3f((float) (3.5 - PIV_X), 0.75f, (float) (2.95 - PIV_Z));
         float spin = (float) Math.toRadians(spinDeg);
+        Vector3f tr, scale;
+        Quaternionf q;
         if (part == 0) {
-            float h = 0.22f;
-            return new Transformation(new Vector3f(base).add(-h / 2, -h / 2, -0.08f), new Quaternionf(), new Vector3f(h, h, 0.16f), new Quaternionf());
-        }
-        float len, wid = 0.07f, angle;
-        Vector3f centre;
-        if (part <= SPOKES) {
-            len = 1.15f;
-            angle = spin + (float) Math.toRadians((part - 1) * 45.0);
-            centre = new Vector3f();
+            float h = 0.2f;
+            tr = new Vector3f(base).add(-h / 2, -h / 2, -0.08f);
+            q = new Quaternionf();
+            scale = new Vector3f(h, h, 0.16f);
         } else {
-            int k = part - SPOKES - 1;
-            float a = spin + (float) Math.toRadians(22.5 + k * 45.0);
-            float r = 0.43f;
-            centre = new Vector3f((float) Math.cos(a) * r, (float) Math.sin(a) * r, 0);
-            len = 0.36f;
-            angle = a + (float) Math.PI / 2;
-            wid = 0.09f;
+            float len, wid = 0.06f, angle;
+            Vector3f centre;
+            if (part <= SPOKES) {
+                len = 0.95f;
+                angle = spin + (float) Math.toRadians((part - 1) * 45.0);
+                centre = new Vector3f();
+            } else {
+                int k = part - SPOKES - 1;
+                float a = spin + (float) Math.toRadians(22.5 + k * 45.0);
+                float r = 0.36f;
+                centre = new Vector3f((float) Math.cos(a) * r, (float) Math.sin(a) * r, 0);
+                len = 0.3f;
+                angle = a + (float) Math.PI / 2;
+                wid = 0.08f;
+            }
+            q = new Quaternionf(new AxisAngle4f(angle, 0, 0, 1));
+            Vector3f half = new Vector3f(len / 2, wid / 2, wid / 2).rotate(q);
+            tr = new Vector3f(base).add(centre).sub(half);
+            scale = new Vector3f(len, wid, wid);
         }
-        Quaternionf q = new Quaternionf(new AxisAngle4f(angle, 0, 0, 1));
-        Vector3f half = new Vector3f(len / 2, wid / 2, wid / 2).rotate(q);
-        return new Transformation(new Vector3f(base).add(centre).sub(half), q, new Vector3f(len, wid, wid), new Quaternionf());
+        Quaternionf ship = turnQ(shipYaw);
+        return new Transformation(ship.transform(new Vector3f(tr)), new Quaternionf(ship).mul(q), scale, new Quaternionf());
+    }
+
+    /** Can the hull be at this pose? (water or air at the waterline and below, nothing solid) */
+    private boolean hullFree(World w, double px, double pz, float yaw, int waterTop) {
+        for (double[] h : HULL) {
+            double[] p = at(px, pz, yaw, h[0], h[1]);
+            int bx = (int) Math.floor(p[0]), bz = (int) Math.floor(p[1]);
+            if (!w.isChunkLoaded(bx >> 4, bz >> 4)) return false;
+            for (int y = waterTop - 1; y <= waterTop + 1; y++) {
+                Block b = w.getBlockAt(bx, y, bz);
+                if (index.containsKey(key(w.getName(), bx, y, bz))) return false;
+                if (!freeForHull(b, waterTop) && !b.getType().isAir()) return false;
+            }
+        }
+        return true;
     }
 
     /** Sailing -> at anchor, where the ship is now. Returns false if there is no room. */
     private boolean dropAnchor(Ship s, int radius) {
-        Entity boat = s.boat == null ? null : Bukkit.getEntity(s.boat);
         World w = Bukkit.getWorld(s.world);
         if (w == null) return false;
-        double bx = boat != null ? boat.getLocation().getX() : s.lastX, bz = boat != null ? boat.getLocation().getZ() : s.lastZ;
-        float yaw = boat != null ? boat.getLocation().getYaw() : s.rot * 90f;
-        int waterTop = waterTop(w, bx, bz, boat != null ? boat.getLocation().getY() : s.oy + 2);
-        if (waterTop == Integer.MIN_VALUE) return false;
-        int[] spot = findSpot(w, bx, bz, waterTop, rotationOf(yaw), radius, BOAT_X, BOAT_Z);
+        int waterTop = (int) Math.round(s.y) - 1;
+        if (s.root == null) {
+            int found = waterTop(w, s.lastX, s.lastZ, 70);
+            if (found == Integer.MIN_VALUE) return false;
+            waterTop = found;
+        }
+        int[] spot = findSpot(w, s.lastX, s.lastZ, waterTop, rotationOf(s.yaw), radius, PIV_X, PIV_Z);
         if (spot == null) return false;
-        List<Entity> riders = boat != null ? new ArrayList<>(boat.getPassengers()) : List.of();
+        List<Player> riders = new ArrayList<>();
+        for (var seat : s.seats) for (Entity e : seat.getPassengers()) if (e instanceof Player p) riders.add(p);
+        s.anchoring = true;
         removeModel(s);
+        s.anchoring = false;
         s.ox = spot[0];
         s.oy = spot[1];
         s.oz = spot[2];
@@ -472,13 +527,11 @@ public final class Ships implements Listener {
         s.sailing = false;
         build(w, s);
         indexShip(s, true);
-        // the crew stands on the deck again
-        int n = 0;
-        for (Entity e : riders) {
-            if (!(e instanceof Player p)) continue;
-            double[] at = point(s.ox, s.oz, s.rot, SEAT_X, SEAT_Z + n * 3);
-            p.teleport(new Location(w, at[0], s.oy + 2, at[1], s.rot * 90f, 0));
-            n++;
+        // the crew stands on the deck again, each where they sat
+        for (int i = 0; i < riders.size(); i++) {
+            double[] seat = SEATS[Math.min(i, SEATS.length - 1)];
+            double[] p = point(s.ox, s.oz, s.rot, seat[0], seat[1]);
+            riders.get(i).teleport(new Location(w, p[0], s.oy + 2, p[1], s.rot * 90f, 0));
         }
         save();
         return true;
@@ -486,69 +539,138 @@ public final class Ships implements Listener {
 
     private static int waterTop(World w, double x, double z, double fromY) {
         int bx = (int) Math.floor(x), bz = (int) Math.floor(z);
-        for (int y = (int) Math.floor(fromY) + 1; y > fromY - 4; y--) {
+        for (int y = (int) Math.floor(fromY) + 1; y > fromY - 12; y--) {
             if (w.getBlockAt(bx, y, bz).getType() == Material.WATER) return y;
         }
         return Integer.MIN_VALUE;
     }
 
     private void removeModel(Ship s) {
-        Entity boat = s.boat == null ? null : Bukkit.getEntity(s.boat);
-        if (boat != null) {
-            for (Entity e : new ArrayList<>(boat.getPassengers())) boat.removePassenger(e);
-            boat.remove();
-        }
+        for (var seat : s.seats) for (Entity e : new ArrayList<>(seat.getPassengers())) seat.removePassenger(e);
         for (UUID id : s.parts) {
             Entity e = Bukkit.getEntity(id);
             if (e != null) e.remove();
         }
+        Entity root = s.root == null ? null : Bukkit.getEntity(s.root);
+        if (root != null) root.remove();
         s.parts.clear();
+        s.partList.clear();
+        s.partPos.clear();
         s.wheel.clear();
-        s.boat = null;
+        s.seats.clear();
+        s.root = null;
+        s.interaction = null;
         s.captain = null;
     }
 
     // ================================================================ while sailing
 
     private void tick() {
-        for (Ship s : ships.values()) {
-            if (!s.sailing) continue;
-            Entity boat = s.boat == null ? null : Bukkit.getEntity(s.boat);
-            if (boat == null) continue;
-            s.lastX = boat.getLocation().getX();
-            s.lastZ = boat.getLocation().getZ();
-            // the wheel turns while the captain steers
+        for (Ship s : new ArrayList<>(ships.values())) {
+            if (!s.sailing || s.root == null) continue;
+            World w = Bukkit.getWorld(s.world);
+            Entity root = Bukkit.getEntity(s.root);
             Player cap = s.captain == null ? null : Bukkit.getPlayer(s.captain);
-            if (cap == null) continue;
+            if (w == null || root == null) continue;
+            if (cap == null || s.seats.isEmpty() || !s.seats.get(0).getPassengers().contains(cap)) {
+                if (!dropAnchor(s, 16)) s.speed = 0;
+                continue;
+            }
             org.bukkit.Input in = cap.getCurrentInput();
+            if (in.isForward()) s.speed = Math.min(MAX_SPEED, s.speed + ACCEL);
+            else if (in.isBackward()) s.speed = Math.max(MAX_BACK, s.speed - BRAKE);
+            else s.speed *= 0.992;
             int dir = in.isRight() && !in.isLeft() ? 1 : in.isLeft() && !in.isRight() ? -1 : 0;
-            if (dir == 0) continue;
-            s.wheelAngle += dir * 9f;
-            for (int i = 0; i < s.wheel.size(); i++) {
-                if (Bukkit.getEntity(s.wheel.get(i)) instanceof BlockDisplay d) {
+            int waterTop = (int) Math.round(s.y) - 1;
+            float newYaw = s.yaw;
+            if (dir != 0) {
+                float rate = (float) (0.8 + 2.2 * Math.min(1, Math.abs(s.speed) / MAX_SPEED));
+                newYaw = s.yaw + dir * rate;
+                if (hullFree(w, s.lastX, s.lastZ, newYaw, waterTop)) {
+                    s.yaw = newYaw;
+                    s.wheelAngle += dir * 8f;
+                }
+            }
+            double th = Math.toRadians(s.yaw);
+            double nx = s.lastX - Math.sin(th) * s.speed, nz = s.lastZ + Math.cos(th) * s.speed;
+            if (Math.abs(s.speed) > 0.0005) {
+                if (hullFree(w, nx, nz, s.yaw, waterTop)) {
+                    s.lastX = nx;
+                    s.lastZ = nz;
+                } else {
+                    if (Math.abs(s.speed) > 0.05) cap.sendActionBar(Component.text("Bump! Steer around it.", NamedTextColor.RED));
+                    s.speed = 0;
+                }
+            }
+            // move the model and the seats
+            root.teleport(new Location(w, s.lastX, s.y, s.lastZ), io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
+            for (int i = 0; i < s.seats.size(); i++) {
+                double[] p = at(s.lastX, s.lastZ, s.yaw, SEATS[i][0], SEATS[i][1]);
+                s.seats.get(i).teleport(new Location(w, p[0], s.y, p[1], s.yaw, 0), io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
+            }
+            Entity click = s.interaction == null ? null : Bukkit.getEntity(s.interaction);
+            if (click != null) click.teleport(new Location(w, s.lastX, s.y - 1, s.lastZ));
+            if (Math.abs(s.yaw - s.shownYaw) > 0.01f) {
+                Quaternionf q = turnQ(s.yaw);
+                for (int i = 0; i < s.partList.size(); i++) {
+                    BlockDisplay d = s.partList.get(i);
                     d.setInterpolationDelay(0);
                     d.setInterpolationDuration(2);
-                    d.setTransformation(wheelPart(i, s.wheelAngle));
+                    d.setTransformation(new Transformation(q.transform(new Vector3f(s.partPos.get(i))), new Quaternionf(q), new Vector3f(1, 1, 1), new Quaternionf()));
+                }
+                s.shownYaw = s.yaw;
+            }
+            if (dir != 0 || Math.abs(s.yaw - s.shownYaw) > 0) {
+                for (int i = 0; i < s.wheel.size(); i++) {
+                    BlockDisplay d = s.wheel.get(i);
+                    d.setInterpolationDelay(0);
+                    d.setInterpolationDuration(2);
+                    d.setTransformation(wheelPart(i, s.wheelAngle, s.yaw));
                 }
             }
         }
     }
 
-    private Ship shipOfBoat(Entity e) {
-        String id = e.getPersistentDataContainer().get(boatKey, PersistentDataType.STRING);
-        return id == null ? null : ships.get(UUID.fromString(id));
+    private Ship shipOfSeat(Entity e) {
+        for (Ship s : ships.values()) {
+            for (var seat : s.seats) if (seat.equals(e)) return s;
+        }
+        return null;
     }
 
     @EventHandler(ignoreCancelled = true)
     public void onDismount(EntityDismountEvent event) {
-        Ship s = shipOfBoat(event.getDismounted());
-        if (s == null || !s.sailing || !(event.getEntity() instanceof Player p)) return;
-        if (!p.getUniqueId().equals(s.captain)) return;          // a passenger may jump off
+        Ship s = shipOfSeat(event.getDismounted());
+        if (s == null || !s.sailing || s.anchoring || !(event.getEntity() instanceof Player p)) return;
         event.setCancelled(true);
+        if (!p.getUniqueId().equals(s.captain)) {
+            p.sendActionBar(Component.text("You can get up when the captain drops anchor.", NamedTextColor.YELLOW));
+            return;
+        }
         Bukkit.getScheduler().runTask(plugin, () -> {
-            if (dropAnchor(s, 4)) p.sendActionBar(Component.text("Anchor dropped.", NamedTextColor.GREEN));
+            if (dropAnchor(s, 5)) p.sendActionBar(Component.text("Anchor dropped.", NamedTextColor.GREEN));
             else p.sendActionBar(Component.text("No room to drop anchor here - sail into open water.", NamedTextColor.RED));
         });
+    }
+
+    /** Right-clicking a sailing ship takes a free seat. */
+    @EventHandler(ignoreCancelled = true)
+    public void onBoard(org.bukkit.event.player.PlayerInteractEntityEvent event) {
+        for (Ship s : ships.values()) {
+            if (!s.sailing || s.interaction == null || !s.interaction.equals(event.getRightClicked().getUniqueId())) continue;
+            event.setCancelled(true);
+            Player p = event.getPlayer();
+            if (p.getVehicle() != null) return;
+            for (var seat : s.seats) {
+                if (seat.getPassengers().isEmpty()) {
+                    seat.addPassenger(p);
+                    p.sendActionBar(Component.text("Welcome aboard!", NamedTextColor.GREEN));
+                    return;
+                }
+            }
+            p.sendActionBar(Component.text("The ship is full.", NamedTextColor.RED));
+            return;
+        }
     }
 
     @EventHandler
@@ -558,16 +680,6 @@ public final class Ships implements Listener {
                 plugin.getLogger().warning("Ship of " + s.ownerName + " could not drop anchor; it will at the next start.");
             }
         }
-    }
-
-    @EventHandler(ignoreCancelled = true)
-    public void onBoatDamage(VehicleDamageEvent event) {
-        if (shipOfBoat(event.getVehicle()) != null) event.setCancelled(true);
-    }
-
-    @EventHandler(ignoreCancelled = true)
-    public void onBoatDestroy(VehicleDestroyEvent event) {
-        if (shipOfBoat(event.getVehicle()) != null) event.setCancelled(true);
     }
 
     /** On shutdown every sailing ship drops anchor (as near as it fits). */
