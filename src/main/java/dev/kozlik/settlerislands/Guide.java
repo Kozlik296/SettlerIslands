@@ -92,8 +92,8 @@ public final class Guide implements Listener, CommandExecutor {
                 "Craft a Sloop:\n  3 white wool\n  log, chest, log\n  3 boats\n\nRight-click the water (also from a pier) "
                         + "to launch it. At anchor you walk on deck and use its chests."));
         pages.add(page("Sailing",
-                "Right-click the helm to set sail. Everyone on deck sits down and comes along (4 seats); "
-                        + "others can right-click the ship to board.\n\nW / S: faster / slower\nA / D: steer\n"
+                "The ship has 4 benches. Sit on one (right-click), the captain sits at the back and right-clicks "
+                        + "the helm to set sail. Everyone on board comes along.\n\nW / S: faster / slower\nA / D: steer\n"
                         + "Sneak: drop anchor"));
         pages.add(page("Ships (3)",
                 "Sneak + right-click the helm at anchor to pack the ship into an item (empty the chests first).\n\n"

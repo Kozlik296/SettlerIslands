@@ -72,7 +72,9 @@ public final class Ships implements Listener {
     // the ship turns about this point (template coordinates, the middle of the deck)
     private static final double PIV_X = 3.5, PIV_Z = 7.0;
     // seats while sailing (template coordinates): the captain at the stern behind the wheel, then the crew
-    private static final double[][] SEATS = {{3.5, 1.5}, {2.5, 6.5}, {4.5, 6.5}, {3.5, 11.0}};
+    private static final double[][] SEATS = {{3.5, 1.5}, {2.5, 6.5}, {4.5, 6.5}, {3.5, 11.5}};
+    // the seats are benches (stairs): sitting height above the deck
+    private static final double SEAT_Y = 0.5;
     // edge points of the hull checked for collisions while sailing (template coordinates)
     private static final double[][] HULL = {{3.5, 13.7}, {1.3, 11.6}, {5.7, 11.6}, {0.2, 9}, {6.8, 9}, {0.2, 5}, {6.8, 5},
             {0.2, 1}, {6.8, 1}, {3.5, 0.2}};
@@ -111,6 +113,7 @@ public final class Ships implements Listener {
     private final File file;
     private final Map<UUID, Ship> ships = new HashMap<>();
     private final Map<Long, UUID> index = new HashMap<>();     // block position -> anchored ship
+    private final Map<UUID, UUID> benchSeats = new HashMap<>(); // seat entity on a bench at anchor -> ship
     private Template tp;
 
     public Ships(SettlerIslands plugin) {
@@ -252,6 +255,33 @@ public final class Ships implements Listener {
         return null;
     }
 
+    private static int[] facing(int rot) {
+        return switch (rot & 3) {
+            case 0 -> new int[]{0, 1};
+            case 1 -> new int[]{-1, 0};
+            case 2 -> new int[]{0, -1};
+            default -> new int[]{1, 0};
+        };
+    }
+
+    /** Players sitting on this ship's benches at anchor stand up (the seats go away). */
+    private List<Player> clearBenches(Ship s) {
+        List<Player> out = new ArrayList<>();
+        for (var it = benchSeats.entrySet().iterator(); it.hasNext(); ) {
+            var e = it.next();
+            if (!e.getValue().equals(s.id)) continue;
+            Entity seat = Bukkit.getEntity(e.getKey());
+            it.remove();
+            if (seat == null) continue;
+            for (Entity rider : new ArrayList<>(seat.getPassengers())) {
+                seat.removePassenger(rider);
+                if (rider instanceof Player pl) out.add(pl);
+            }
+            seat.remove();
+        }
+        return out;
+    }
+
     private static int rotationOf(float yaw) {
         return Template.rotationFacing(-Math.sin(Math.toRadians(yaw)), Math.cos(Math.toRadians(yaw)));
     }
@@ -323,6 +353,20 @@ public final class Ships implements Listener {
         if (event.getAction() != Action.RIGHT_CLICK_AIR && event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
         Player p = event.getPlayer();
         if (event.getAction() == Action.RIGHT_CLICK_BLOCK && event.getClickedBlock() != null
+                && event.getClickedBlock().getBlockData() instanceof org.bukkit.block.data.type.Stairs && !p.isSneaking()) {
+            Ship s = shipAt(event.getClickedBlock());
+            if (s != null && !s.sailing) {
+                event.setCancelled(true);
+                if (event.getHand() != EquipmentSlot.HAND || p.getVehicle() != null) return;
+                Block b = event.getClickedBlock();
+                org.bukkit.entity.ItemDisplay seat = b.getWorld().spawn(b.getLocation().add(0.5, SEAT_Y, 0.5).setDirection(
+                        new org.bukkit.util.Vector(facing(s.rot)[0], 0, facing(s.rot)[1])), org.bukkit.entity.ItemDisplay.class, e -> e.setPersistent(false));
+                seat.addPassenger(p);
+                benchSeats.put(seat.getUniqueId(), s.id);
+                return;
+            }
+        }
+        if (event.getAction() == Action.RIGHT_CLICK_BLOCK && event.getClickedBlock() != null
                 && event.getClickedBlock().getState() instanceof Sign) {
             Ship s = shipAt(event.getClickedBlock());
             if (s != null) {
@@ -372,9 +416,11 @@ public final class Ships implements Listener {
     private void setSail(Player captain, Ship s) {
         World w = Bukkit.getWorld(s.world);
         if (w == null || s.sailing) return;
-        List<Player> crew = new ArrayList<>();
+        List<Player> crew = new ArrayList<>(clearBenches(s));
+        crew.remove(captain);
+        if (captain.getVehicle() != null) captain.getVehicle().removePassenger(captain);
         for (Entity e : w.getNearbyEntities(box(s).expand(0.5))) {
-            if (e instanceof Player other && !other.equals(captain) && other.getVehicle() == null) crew.add(other);
+            if (e instanceof Player other && !other.equals(captain) && other.getVehicle() == null && !crew.contains(other)) crew.add(other);
         }
         double[] piv = point(s.ox, s.oz, s.rot, PIV_X, PIV_Z);
         s.yaw = s.rot * 90f;
@@ -423,7 +469,7 @@ public final class Ships implements Listener {
         }
         for (double[] seat : SEATS) {
             double[] p = at(piv[0], piv[1], s.yaw, seat[0], seat[1]);
-            org.bukkit.entity.ItemDisplay st = w.spawn(new Location(w, p[0], s.y, p[1], s.yaw, 0), org.bukkit.entity.ItemDisplay.class, e -> {
+            org.bukkit.entity.ItemDisplay st = w.spawn(new Location(w, p[0], s.y + SEAT_Y, p[1], s.yaw, 0), org.bukkit.entity.ItemDisplay.class, e -> {
                 e.setPersistent(false);
                 e.setTeleportDuration(2);
             });
@@ -531,7 +577,7 @@ public final class Ships implements Listener {
         for (int i = 0; i < riders.size(); i++) {
             double[] seat = SEATS[Math.min(i, SEATS.length - 1)];
             double[] p = point(s.ox, s.oz, s.rot, seat[0], seat[1]);
-            riders.get(i).teleport(new Location(w, p[0], s.oy + 2, p[1], s.rot * 90f, 0));
+            riders.get(i).teleport(new Location(w, p[0], s.oy + 2 + SEAT_Y, p[1], s.rot * 90f, 0));
         }
         save();
         return true;
@@ -606,7 +652,7 @@ public final class Ships implements Listener {
             root.teleport(new Location(w, s.lastX, s.y, s.lastZ), io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
             for (int i = 0; i < s.seats.size(); i++) {
                 double[] p = at(s.lastX, s.lastZ, s.yaw, SEATS[i][0], SEATS[i][1]);
-                s.seats.get(i).teleport(new Location(w, p[0], s.y, p[1], s.yaw, 0), io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
+                s.seats.get(i).teleport(new Location(w, p[0], s.y + SEAT_Y, p[1], s.yaw, 0), io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
             }
             Entity click = s.interaction == null ? null : Bukkit.getEntity(s.interaction);
             if (click != null) click.teleport(new Location(w, s.lastX, s.y - 1, s.lastZ));
@@ -640,6 +686,13 @@ public final class Ships implements Listener {
 
     @EventHandler(ignoreCancelled = true)
     public void onDismount(EntityDismountEvent event) {
+        Entity dismounted = event.getDismounted();
+        if (benchSeats.remove(dismounted.getUniqueId()) != null) {
+            Bukkit.getScheduler().runTask(plugin, dismounted::remove);
+            Entity rider = event.getEntity();
+            Bukkit.getScheduler().runTask(plugin, () -> rider.teleport(rider.getLocation().add(0, 0.6, 0)));
+            return;
+        }
         Ship s = shipOfSeat(event.getDismounted());
         if (s == null || !s.sailing || s.anchoring || !(event.getEntity() instanceof Player p)) return;
         event.setCancelled(true);
@@ -684,7 +737,10 @@ public final class Ships implements Listener {
 
     /** On shutdown every sailing ship drops anchor (as near as it fits). */
     public void shutdown() {
-        for (Ship s : ships.values()) if (s.sailing) dropAnchor(s, 24);
+        for (Ship s : ships.values()) {
+            clearBenches(s);
+            if (s.sailing) dropAnchor(s, 24);
+        }
         save();
     }
 
@@ -704,6 +760,7 @@ public final class Ships implements Listener {
                 return;
             }
         }
+        clearBenches(s);
         indexShip(s, false);
         clear(w, s);
         ships.remove(s.id);
