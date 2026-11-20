@@ -36,6 +36,7 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
     private SetupListener setup;
     private Economy economy;
     private Guide guide;
+    private Ships ships;
 
     public Guide guide() {
         return guide;
@@ -44,6 +45,7 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
     @Override
     public void onDisable() {
         if (economy != null) economy.save();
+        if (ships != null) ships.saveNow();
     }
 
 
@@ -59,6 +61,8 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
         economy = new Economy(this, setup.tradesKey);
         getServer().getPluginManager().registerEvents(economy, this);
         getServer().getPluginManager().registerEvents(new ChestShops(this), this);
+        ships = new Ships(this);
+        getServer().getPluginManager().registerEvents(ships, this);
         guide = new Guide(this);
         getServer().getPluginManager().registerEvents(guide, this);
         if (getCommand("guide") != null) getCommand("guide").setExecutor(guide);
@@ -148,6 +152,7 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
             sender.sendMessage("/si tp <island|zone> - go to an island (meadow, ironstone, islet3, nether...)");
             sender.sendMessage("/si tp village|fortress|harbour - go to a structure");
             sender.sendMessage("/si tp settlement <timberlands|sandbanks|ironstone|highlands|nether> - go to a settlement");
+            sender.sendMessage("/si ship - get a Sloop item (for testing)");
             sender.sendMessage("/si mapwall - hang the 9 world maps in the city hall again");
             sender.sendMessage("/si retrade - give the settlement villager you look at its trades from trades.yml again");
             sender.sendMessage("/si where - show the zone and biome you stand in");
@@ -253,6 +258,9 @@ public final class SettlerIslands extends JavaPlugin implements Listener {
                     }
                     sender.sendMessage(sb.toString());
                 }
+            }
+            case "ship" -> {
+                if (sender instanceof Player p) p.getInventory().addItem(ships.item());
             }
             case "mapwall" -> {
                 if (!(sender instanceof Player p) || !(p.getWorld().getGenerator() instanceof IslandGenerator)) return true;

@@ -67,3 +67,8 @@ rules:
   trade-filter: true
   # [shop] signs on chests
   chest-shops: true
+
+# ------------------------------------------------------------------ ships
+ships:
+  # the sloop moves one block every this many ticks while sailing (3 = about 6.7 blocks a second)
+  ticks-per-block: 3

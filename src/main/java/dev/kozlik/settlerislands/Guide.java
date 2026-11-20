@@ -88,6 +88,13 @@ public final class Guide implements Listener, CommandExecutor {
         pages.add(page("Nether outpost",
                 "Alchemist.\nSells nether wart, glowstone, quartz, blaze powder, magma cream, golden apples.\n"
                         + "Buys logs, bread, gold, water buckets."));
+        pages.add(page("Ships",
+                "Craft a Sloop:\n  3 white wool\n  log, chest, log\n  3 boats\n\nRight-click open water to launch it. "
+                        + "Walk on deck, use its 3 chests.\nRight-click the helm sign to sail, look where you want to go, "
+                        + "right-click again to stop."));
+        pages.add(page("Ships (2)",
+                "Everyone on deck moves with the ship.\n\nSneak + right-click the helm to pack it back into an item "
+                        + "(chests must be empty first).\n\nNo building on ships."));
         pages.add(page("Prices",
                 "Pay and get paid in emeralds.\n\nEvery island has one price per trade, the same for everyone. "
                         + "Each time a trade is used there it gets a bit worse (up to 2x). It recovers by itself "

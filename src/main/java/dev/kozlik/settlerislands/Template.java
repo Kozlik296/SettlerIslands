@@ -122,6 +122,16 @@ public final class Template {
         return out;
     }
 
+    /** Palette index of a cell: 0 = keep what is there, 1 = air, 2+ = a block. */
+    public int paletteIndex(int x, int y, int z) {
+        return index(x, y, z);
+    }
+
+    /** The block of a palette index, turned by rot. */
+    public BlockData data(int idx, int rot) {
+        return resolve(palette[idx], rot, null);
+    }
+
     /** The block name stored in a template cell. */
     public String blockAt(int x, int y, int z) {
         return palette[index(x, y, z)];
@@ -210,6 +220,8 @@ public final class Template {
         while (m.find()) m.appendReplacement(sb, turn(m.group(1), rot) + "=");
         m.appendTail(sb);
         s = sb.toString();
+        java.util.regex.Matcher r = java.util.regex.Pattern.compile("rotation=(\\d+)").matcher(s);
+        if (r.find()) s = r.replaceFirst("rotation=" + ((Integer.parseInt(r.group(1)) + rot * 4) & 15));
         if ((rot & 1) == 1) {
             m = AXIS.matcher(s);
             sb = new StringBuilder();
