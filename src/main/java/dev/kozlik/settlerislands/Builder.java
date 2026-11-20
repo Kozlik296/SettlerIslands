@@ -25,6 +25,12 @@ public final class Builder {
     public final LimitedRegion region;
     public final WorldModel model;
     public final int minX, minZ, minY, maxY;
+    /** Set by the populator: blocks of structures that tree clearing must never remove. */
+    public StructurePlan plan;
+
+    private boolean built(int x, int y, int z) {
+        return plan != null && plan.built(x, y, z);
+    }
 
     public Builder(LimitedRegion region, WorldModel model, int chunkX, int chunkZ, int minY, int maxY) {
         this.region = region;
@@ -197,8 +203,9 @@ public final class Builder {
                 int g = ground(x, z);
                 for (int y = g - 2; y <= Math.min(maxY - 1, g + 45); y++) {
                     Material m = region.getType(x, y, z);
+                    if (built(x, y, z)) continue;
                     if (trunk(m)) queue.add(new int[]{x, y, z});
-                    else if (crown(m)) {
+                    else if (crown(m) && !(region.getBlockData(x, y, z) instanceof org.bukkit.block.data.type.Leaves lv && lv.isPersistent())) {
                         region.setType(x, y, z, Material.AIR);
                         // find the trunk this crown belongs to
                         long cell = ((long) (x >> 2) << 40) ^ ((long) (y >> 2) << 20) ^ (z >> 2 & 0xfffff);
@@ -206,7 +213,8 @@ public final class Builder {
                         for (int dx = -3; dx <= 3; dx++)
                             for (int dz = -3; dz <= 3; dz++)
                                 for (int dy = -4; dy <= 2; dy++)
-                                    if (region.isInRegion(x + dx, y + dy, z + dz) && trunk(region.getType(x + dx, y + dy, z + dz)))
+                                    if (region.isInRegion(x + dx, y + dy, z + dz) && trunk(region.getType(x + dx, y + dy, z + dz))
+                                            && !built(x + dx, y + dy, z + dz))
                                         queue.add(new int[]{x + dx, y + dy, z + dz});
                     }
                 }
@@ -220,7 +228,8 @@ public final class Builder {
         while (!queue.isEmpty()) {
             int[] seed = queue.poll();
             if (!visited.add(pk(seed[0], seed[1], seed[2]))) continue;
-            if (!region.isInRegion(seed[0], seed[1], seed[2]) || !trunk(region.getType(seed[0], seed[1], seed[2]))) continue;
+            if (!region.isInRegion(seed[0], seed[1], seed[2]) || !trunk(region.getType(seed[0], seed[1], seed[2]))
+                    || built(seed[0], seed[1], seed[2])) continue;
             java.util.List<int[]> group = new java.util.ArrayList<>();
             java.util.ArrayDeque<int[]> q = new java.util.ArrayDeque<>();
             q.add(seed);
@@ -235,7 +244,7 @@ public final class Builder {
                             int x = p[0] + dx, y = p[1] + dy, z = p[2] + dz;
                             if (!region.isInRegion(x, y, z)) continue;
                             if (!tree && naturalCrown(x, y, z)) tree = true;
-                            if (trunk(region.getType(x, y, z)) && visited.add(pk(x, y, z))) q.add(new int[]{x, y, z});
+                            if (trunk(region.getType(x, y, z)) && !built(x, y, z) && visited.add(pk(x, y, z))) q.add(new int[]{x, y, z});
                         }
             }
             if (!tree) tree = bareTrunk(group);
@@ -253,7 +262,7 @@ public final class Builder {
                     for (int dy = -3; dy <= 4; dy++) {
                         if (Math.abs(dx) + Math.abs(dz) + Math.abs(dy) > 7) continue;
                         int x = p[0] + dx, y = p[1] + dy, z = p[2] + dz;
-                        if (region.isInRegion(x, y, z) && naturalCrown(x, y, z)) region.setType(x, y, z, Material.AIR);
+                        if (region.isInRegion(x, y, z) && naturalCrown(x, y, z) && !built(x, y, z)) region.setType(x, y, z, Material.AIR);
                     }
         }
     }

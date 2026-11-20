@@ -124,6 +124,15 @@ public final class Harbour {
         }
     }
 
+    public void placements(List<StructurePlan.Placement> out) {
+        int rot = Template.rotationFacing(c.dx(), c.dz());
+        Template tp = Template.get("house_big");
+        for (int side : new int[]{-17, 17}) {
+            int[] o = buildingOrigin(tp, side);
+            out.add(new StructurePlan.Placement(tp, o[0], QUAY, o[1], rot));
+        }
+    }
+
     private int[] buildingOrigin(Template tp, int side) {
         int rot = Template.rotationFacing(c.dx(), c.dz());
         int[] off = tp.offset(tp.w / 2, 10, rot);

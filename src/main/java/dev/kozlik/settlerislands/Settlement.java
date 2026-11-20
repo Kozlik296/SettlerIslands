@@ -154,6 +154,11 @@ public final class Settlement {
         tp.place(b, o[0], yardY, o[1], rot(), Map.of(), true);
     }
 
+    public void placements(List<StructurePlan.Placement> out) {
+        int[] o = origin();
+        out.add(new StructurePlan.Placement(tp, o[0], yardY, o[1], rot()));
+    }
+
     public void collectTasks(List<StructurePlan.Task> tasks) {
         int[] o = origin();
         for (int[] c : tp.findContaining("_bed[part=head")) {

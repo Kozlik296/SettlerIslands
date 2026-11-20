@@ -77,6 +77,12 @@ public final class Template {
         return data[(y * d + z) * w + x];
     }
 
+    /** Palette index at offset (u, v) inside the placed box (rotation rot) and layer y. */
+    public int indexAt(int u, int y, int v, int rot) {
+        int[] c = cell(u, v, rot);
+        return index(c[0], y, c[1]);
+    }
+
     /** Width and depth of the placed box for a rotation. */
     public int sizeX(int rot) {
         return (rot & 1) == 0 ? w : d;

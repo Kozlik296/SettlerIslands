@@ -60,6 +60,48 @@ public final class StructurePlan {
     public record SetLoot(int x, int y, int z, String lootTable) implements Task {
     }
 
+    /** One template placed in the world: (ox, oy, oz) is the lowest corner of the placed box. */
+    public record Placement(Template tp, int ox, int oy, int oz, int rot) {
+    }
+
+    private final Map<Long, List<Placement>> placementsByChunk = new java.util.HashMap<>();
+    private final Map<Long, int[]> keptColumns = new java.util.HashMap<>();
+
+    private static long ck(int a, int b) {
+        return ((long) a << 32) ^ (b & 0xffffffffL);
+    }
+
+    /**
+     * True if a structure puts a block at this spot (a template cell that is not 'keep' or air, or
+     * the bottom layer continuing down, or a garden tree trunk). Tree clearing leaves such blocks
+     * alone, so a neighbouring chunk that is generated later can never eat log posts out of a
+     * building that is already there.
+     */
+    public boolean built(int x, int y, int z) {
+        List<Placement> ps = placementsByChunk.get(ck(x >> 4, z >> 4));
+        if (ps != null) {
+            for (Placement p : ps) {
+                int u = x - p.ox(), v = z - p.oz();
+                if (u < 0 || v < 0 || u >= p.tp().sizeX(p.rot()) || v >= p.tp().sizeZ(p.rot())) continue;
+                int ly = y - p.oy();
+                if (ly >= p.tp().h) continue;
+                if (p.tp().indexAt(u, Math.max(0, ly), v, p.rot()) >= 2) return true;
+            }
+        }
+        int[] col = keptColumns.get(ck(x, z));
+        return col != null && y >= col[0] && y <= col[1];
+    }
+
+    private void index(List<Placement> all, List<int[]> columns) {
+        for (Placement p : all) {
+            int x2 = p.ox() + p.tp().sizeX(p.rot()) - 1, z2 = p.oz() + p.tp().sizeZ(p.rot()) - 1;
+            for (int cx = p.ox() >> 4; cx <= x2 >> 4; cx++)
+                for (int cz = p.oz() >> 4; cz <= z2 >> 4; cz++)
+                    placementsByChunk.computeIfAbsent(ck(cx, cz), k -> new ArrayList<>()).add(p);
+        }
+        for (int[] c : columns) keptColumns.put(ck(c[0], c[1]), new int[]{c[2], c[3]});
+    }
+
     private static final Map<Long, StructurePlan> PLANS = new ConcurrentHashMap<>();
 
     public static StructurePlan get(WorldModel model, long seed) {
@@ -96,6 +138,14 @@ public final class StructurePlan {
 
         Layout.Island nether = l.find("nether");
         fortress = new Fortress((int) nether.cx + 40, (int) nether.cz);
+
+        List<Placement> all = new ArrayList<>();
+        List<int[]> columns = new ArrayList<>();
+        village.placements(m, all, columns);
+        harbour.placements(all);
+        all.add(new Placement(Template.get("fortress"), fortress.fx - Fortress.OX, Fortress.BASE, fortress.fz - Fortress.OZ, 0));
+        for (Settlement st : settlements) st.placements(all);
+        index(all, columns);
 
         village.collectTasks(tasks);
         fortress.collectTasks(tasks);

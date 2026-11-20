@@ -876,9 +876,30 @@ public final class Village {
         }
         if (lot.yard) {
             // a little tree in the back corner of the garden
-            int bx = lot.fx != 0 ? (lot.fx > 0 ? x1 + 1 : x2 - 1) : (Builder.hash(lot.ox, 3, lot.oz) < 500 ? x1 + 1 : x2 - 1);
-            int bz = lot.fz != 0 ? (lot.fz > 0 ? z1 + 1 : z2 - 1) : (Builder.hash(lot.ox, 4, lot.oz) < 500 ? z1 + 1 : z2 - 1);
+            int[] t = gardenTree(lot);
+            int bx = t[0], bz = t[1];
             if (b.touches(bx - 2, bz - 2, bx + 2, bz + 2)) smallTree(b, bx, b.ground(bx, bz), bz, Builder.hash(bx, 0, bz) < 500);
+        }
+    }
+
+    private static int[] gardenTree(Lot lot) {
+        int x1 = lot.ox - 3, z1 = lot.oz - 3, x2 = lot.ox + lot.sx + 2, z2 = lot.oz + lot.sz + 2;
+        int bx = lot.fx != 0 ? (lot.fx > 0 ? x1 + 1 : x2 - 1) : (Builder.hash(lot.ox, 3, lot.oz) < 500 ? x1 + 1 : x2 - 1);
+        int bz = lot.fz != 0 ? (lot.fz > 0 ? z1 + 1 : z2 - 1) : (Builder.hash(lot.ox, 4, lot.oz) < 500 ? z1 + 1 : z2 - 1);
+        return new int[]{bx, bz};
+    }
+
+    /** Every template this village places (houses and the hall) and the garden tree trunks {x, z, y1, y2}. */
+    public void placements(WorldModel m, List<StructurePlan.Placement> out, List<int[]> columns) {
+        out.add(new StructurePlan.Placement(hall, hallOx, plazaY, hallOz, hallRot));
+        for (Lot lot : lots) {
+            if (!lot.house()) continue;
+            out.add(new StructurePlan.Placement(Template.get(KINDS.get(lot.type).template()), lot.ox, lot.floorY, lot.oz, lot.rot));
+            if (lot.yard) {
+                int[] t = gardenTree(lot);
+                int g = m.height(t[0], t[1], m.sample(t[0], t[1]));
+                columns.add(new int[]{t[0], t[1], g + 1, g + 4});
+            }
         }
     }
 
